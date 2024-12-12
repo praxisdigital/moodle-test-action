@@ -43,13 +43,66 @@ on:
         required: false
         type: boolean
         default: false
+      db-use-mysql:
+        description: 'Use MySQL'
+        required: false
+        type: boolean
+        default: true
+      db-use-postgres:
+        description: 'Use PostgreSQL'
+        required: false
+        type: boolean
+        default: false
+      db-use-mssql:
+        description: 'Use MSSQL'
+        required: false
+        type: boolean
+        default: false
     secrets:
       PRIVATE_REPO_TOKEN:
         description: 'Token for private repositories'
         required: true
 
+env:
+  dbname: test
+  dbuser: test
+  dbpass: test
+  dbcollation: utf8mb4_unicode_ci
+  #pathtophp: /usr/bin/php
 
 jobs:
+  Setup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setting up DB mysql
+        if: ${{ inputs.db-use-mysql }}
+        uses: johanmeiring/mysql-action@tmpfs-patch
+        with:
+          collation server: utf8mb4_danish_ci
+          mysql version: 9
+          mysql database: ${{ env.dbname }}
+          mysql user: ${{ env.dbuser }}
+          mysql password: ${{ env.dbpass }}
+          use tmpfs: true
+
+      - name: Setting up DB pgsql
+        if: ${{ inputs.db-use-pgsql }}
+        uses: m4nu56/postgresql-action@v1
+        with:
+          postgresql version: 16
+          postgresql db: ${{ env.dbname }}
+          postgresql user: ${{ env.dbuser }}
+          postgresql password: ${{ env.dbpass }}
+
+      - name: Setting up DB mssql
+        if: ${{ inputs.db-use-mssql }}
+        uses: praxisdigital/setup-mssql-server@dev
+        with:
+          version: 2022
+          user: ${{ env.dbuser }}
+          password: ${{ env.dbpass }}
+          database: ${{ env.dbname }}
+
   PHPUnit:
     runs-on: ${{ matrix.os }}
     continue-on-error: ${{ matrix.experimental }}
@@ -61,13 +114,6 @@ jobs:
             db: ${{ inputs.dbtype }}
             moodle: ${{ inputs.moodle }}
             experimental: ${{ inputs.experimental }}
-    env:
-      dbtype: ${{ matrix.db }}
-      dbname: test
-      dbuser: test
-      dbpass: test
-      dbcollation: utf8mb4_unicode_ci
-      #pathtophp: /usr/bin/php
     steps:
       - name: Setting up DB mysql
         if: ${{ matrix.db == 'mysqli' }}

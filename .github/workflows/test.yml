@@ -75,19 +75,28 @@ jobs:
         with:
           collation server: utf8mb4_danish_ci
           mysql version: 8
-          mysql database: test
-          mysql user: test
-          mysql password: test
+          mysql database: ${{ env.dbname }}
+          mysql user: ${{ env.dbuser }}
+          mysql password: ${{ env.dbpass }}
           use tmpfs: true
+
+      - name: Setting up DB pgsql
+        if: ${{ matrix.db == 'pgsql' }}
+        uses: m4nu56/postgresql-action@v1
+        with:
+          postgresql version: 16
+          postgresql db: ${{ env.dbname }}
+          postgresql user: ${{ env.dbuser }}
+          postgresql password: ${{ env.dbpass }}
 
       - name: Setting up DB mssql
         if: ${{ matrix.db == 'sqlsrv' }}
         uses: praxisdigital/setup-mssql-server@dev
         with:
           version: 2022
-          user: test
-          password: test
-          database: test
+          user: ${{ env.dbuser }}
+          password: ${{ env.dbpass }}
+          database: ${{ env.dbname }}
 
       - name: Setting up PHP ${{ matrix.php }}
         uses: shivammathur/setup-php@v2

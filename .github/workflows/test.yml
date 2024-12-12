@@ -43,69 +43,22 @@ on:
         required: false
         type: boolean
         default: false
-      db-use-mysql:
-        description: 'Use MySQL'
-        required: false
-        type: boolean
-        default: true
-      db-use-postgres:
-        description: 'Use PostgreSQL'
-        required: false
-        type: boolean
-        default: false
-      db-use-mssql:
-        description: 'Use MSSQL'
-        required: false
-        type: boolean
-        default: false
     secrets:
       PRIVATE_REPO_TOKEN:
         description: 'Token for private repositories'
         required: true
 
-env:
-  dbname: test
-  dbuser: test
-  dbpass: test
-  dbcollation: utf8mb4_unicode_ci
-  #pathtophp: /usr/bin/php
-
 jobs:
-  Setup:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Setting up DB mysql
-        if: ${{ inputs.db-use-mysql }}
-        uses: johanmeiring/mysql-action@tmpfs-patch
-        with:
-          collation server: utf8mb4_danish_ci
-          mysql version: 9
-          mysql database: ${{ env.dbname }}
-          mysql user: ${{ env.dbuser }}
-          mysql password: ${{ env.dbpass }}
-          use tmpfs: true
-
-      - name: Setting up DB pgsql
-        if: ${{ inputs.db-use-pgsql }}
-        uses: m4nu56/postgresql-action@v1
-        with:
-          postgresql version: 16
-          postgresql db: ${{ env.dbname }}
-          postgresql user: ${{ env.dbuser }}
-          postgresql password: ${{ env.dbpass }}
-
-      - name: Setting up DB mssql
-        if: ${{ inputs.db-use-mssql }}
-        uses: praxisdigital/setup-mssql-server@dev
-        with:
-          version: 2022
-          user: ${{ env.dbuser }}
-          password: ${{ env.dbpass }}
-          database: ${{ env.dbname }}
-
   PHPUnit:
+    name: "PHPUnit: ${{ inputs.plugin }}@${{ github.ref }} moodle@${{ inputs.moodle }}, php@${{ inputs.php }}, os: ${{ inputs.os }}"
     runs-on: ${{ matrix.os }}
     continue-on-error: ${{ matrix.experimental }}
+    env:
+      dbname: test
+      dbuser: test
+      dbpass: test
+      dbcollation: utf8mb4_unicode_ci
+      #pathtophp: /usr/bin/php
     strategy:
       matrix:
         include:
@@ -115,35 +68,6 @@ jobs:
             moodle: ${{ inputs.moodle }}
             experimental: ${{ inputs.experimental }}
     steps:
-      - name: Setting up DB mysql
-        if: ${{ matrix.db == 'mysqli' }}
-        uses: johanmeiring/mysql-action@tmpfs-patch
-        with:
-          collation server: utf8mb4_danish_ci
-          mysql version: 8
-          mysql database: ${{ env.dbname }}
-          mysql user: ${{ env.dbuser }}
-          mysql password: ${{ env.dbpass }}
-          use tmpfs: true
-
-      - name: Setting up DB pgsql
-        if: ${{ matrix.db == 'pgsql' }}
-        uses: m4nu56/postgresql-action@v1
-        with:
-          postgresql version: 16
-          postgresql db: ${{ env.dbname }}
-          postgresql user: ${{ env.dbuser }}
-          postgresql password: ${{ env.dbpass }}
-
-      - name: Setting up DB mssql
-        if: ${{ matrix.db == 'sqlsrv' }}
-        uses: praxisdigital/setup-mssql-server@dev
-        with:
-          version: 2022
-          user: ${{ env.dbuser }}
-          password: ${{ env.dbpass }}
-          database: ${{ env.dbname }}
-
       - name: Setting up PHP ${{ matrix.php }}
         uses: shivammathur/setup-php@v2
         with:
@@ -155,13 +79,13 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: moodle/moodle
-          ref: ${{ matrix.moodle }}
+          ref: ${{ inputs.moodle }}
 
       - name: Checking out dependencies
         if: ${{ inputs.dependencies != '' }}
         run: |
           # dependencies are in the format of org/repo:path@ref
-          dependencies=$(echo ${{ inputs.dependencies }} | tr ',' "\n")
+          dependencies="${{ inputs.dependencies }}"
           for dep in $dependencies; do
             repo=$(echo $dep | cut -d: -f1)
             path=$(echo $dep | cut -d: -f2 | cut -d@ -f1)
@@ -169,22 +93,55 @@ jobs:
             url="https://github.com/${repo}.git"
 
             if [[ $repo == ${{ inputs.org }}/* ]]; then
-              printf "Checking out ${repo}@${ref}\n"
+              printf "Checking out ${repo}@${ref} to ${path}\n"
               url="https://oauth2:${{ secrets.PRIVATE_REPO_TOKEN }}@github.com/${repo}.git"
             else
-              printf "Checking out (public) ${repo}@${ref}\n"
+              printf "Checking out (public) ${repo}@${ref} to ${path}\n"
             fi
             git clone --quiet $url $GITHUB_WORKSPACE/$path
-            git -C $GITHUB_WORKSPACE/$path checkout $ref
           done
-
+        
       - name: Check out code from ${{ github.repository }}
         uses: actions/checkout@v4
         with:
           path: ${{ github.workspace }}${{ inputs.plugin-path }}
           ref: ${{ github.ref }}
 
-      - name: Setting up Moodle config
+      - name: Setting up DB mysql
+        if: ${{ inputs.dbtype == 'mysqli' }}
+        uses: johanmeiring/mysql-action@tmpfs-patch
+        with:
+          collation server: utf8mb4_danish_ci
+          mysql version: 9
+          mysql database: ${{ env.dbname || 'test' }}
+          mysql user: ${{ env.dbuser || 'test' }}
+          mysql password: ${{ env.dbpass || 'test' }}
+          use tmpfs: true
+
+      - name: Setting up DB pgsql
+        if: ${{ inputs.dbtype == 'pgsql' }}
+        uses: m4nu56/postgresql-action@v1
+        with:
+          postgresql version: 16
+          postgresql db: ${{ env.dbname || 'test' }}
+          postgresql user: ${{ env.dbuser || 'test' }}
+          postgresql password: ${{ env.dbpass || 'test' }}
+
+      - name: Setting up DB mssql
+        if: ${{ inputs.dbtype == 'sqlsrv' }}
+        uses: praxisdigital/setup-mssql-server@dev
+        with:
+          version: 2022
+          user: ${{ env.dbuser || 'test' }}
+          password: ${{ env.dbpass || 'test' }}
+          database: ${{ env.dbname || 'test' }}
+
+      - name: Generate Moodle configuration
+        env:
+          dbtype: ${{ matrix.db }}
+          dbname: ${{ env.dbname || 'test' }}
+          dbuser: ${{ env.dbuser || 'test' }}
+          dbpass: ${{ env.dbpass || 'test' }}
         run: |
           echo '<?php' >> $GITHUB_WORKSPACE/config.php
           echo 'class moodle_env {' >> $GITHUB_WORKSPACE/config.php

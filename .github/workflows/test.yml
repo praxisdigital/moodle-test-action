@@ -3,14 +3,6 @@ name: Integration & Unit test
 on:
   workflow_call:
     inputs:
-      plugin:
-        description: 'Plugin name (component name)'
-        required: true
-        type: string
-      plugin-path:
-        description: 'Plugin path'
-        required: true
-        type: string
       php:
         description: 'PHP version'
         required: true
@@ -29,7 +21,7 @@ on:
         type: string
         default: 'praxisdigital'
       dependencies:
-        description: 'Dependencies. Comma separated list of org/repo:path@ref (e.g. praxisdigital/assignsubmission_pxaiwriter:mod/assign/submission/pxaiwriter@master,praxisdigital/mod_smartlink:mod/smartlink@MOODLE_42_STABLE)'
+        description: 'Plugin dependencies. Use newline if there are multiple dependencies. Basic format: "repo@ref" User format: "org/repo@ref" Custom path format: "org/repo:path@ref"'
         required: false
         type: string
         default: ''
@@ -46,11 +38,11 @@ on:
     secrets:
       PRIVATE_REPO_TOKEN:
         description: 'Token for private repositories'
-        required: true
+        required: false
 
 jobs:
   PHPUnit:
-    name: "PHPUnit: ${{ inputs.plugin }}@${{ github.ref }} moodle@${{ inputs.moodle }}, php@${{ inputs.php }}, os: ${{ inputs.os }}"
+    name: "PHPUnit: ${{ github.repository }}@${{ github.ref }}, moodle@${{ inputs.moodle }}, php@${{ inputs.php }}, os: ${{ inputs.os }}"
     runs-on: ${{ matrix.os }}
     continue-on-error: ${{ matrix.experimental }}
     env:
@@ -58,6 +50,7 @@ jobs:
       dbuser: test
       dbpass: test
       dbcollation: utf8mb4_unicode_ci
+      plugins: ""
       #pathtophp: /usr/bin/php
     strategy:
       matrix:
@@ -81,60 +74,22 @@ jobs:
           repository: moodle/moodle
           ref: ${{ inputs.moodle }}
 
-      - name: Checking out dependencies
-        if: ${{ inputs.dependencies != '' }}
+
+      - name: Prepare plugins
         run: |
-          # dependencies are in the format of org/repo:path@ref
+          # Adding the plugin repo into a list of dependencies
+          plugins="${{ github.repository }}@${{ github.ref }}"
+
+          # Adding dependencies into the plugin list that contains path and ref
           dependencies="${{ inputs.dependencies }}"
-          for dep in $dependencies; do
-            repo=$(echo $dep | cut -d: -f1)
-            path=$(echo $dep | cut -d: -f2 | cut -d@ -f1)
-            ref=$(echo $dep | cut -d@ -f2)
-            url="https://github.com/${repo}.git"
+          if [[ $dependencies != '' ]]; then
+            for dep in $dependencies; do
+              plugin=$(echo $dep | tr -d ' ')
+              plugins="${plugins}\n${plugin}"
+            done
+          fi
 
-            if [[ $repo == ${{ inputs.org }}/* ]]; then
-              printf "Checking out ${repo}@${ref} to ${path}\n"
-              url="https://oauth2:${{ secrets.PRIVATE_REPO_TOKEN }}@github.com/${repo}.git"
-            else
-              printf "Checking out (public) ${repo}@${ref} to ${path}\n"
-            fi
-            git clone --quiet $url $GITHUB_WORKSPACE/$path
-          done
-        
-      - name: Check out code from ${{ github.repository }}
-        uses: actions/checkout@v4
-        with:
-          path: ${{ github.workspace }}${{ inputs.plugin-path }}
-          ref: ${{ github.ref }}
-
-      - name: Setting up DB mysql
-        if: ${{ inputs.dbtype == 'mysqli' }}
-        uses: johanmeiring/mysql-action@tmpfs-patch
-        with:
-          collation server: utf8mb4_danish_ci
-          mysql version: 9
-          mysql database: ${{ env.dbname || 'test' }}
-          mysql user: ${{ env.dbuser || 'test' }}
-          mysql password: ${{ env.dbpass || 'test' }}
-          use tmpfs: true
-
-      - name: Setting up DB pgsql
-        if: ${{ inputs.dbtype == 'pgsql' }}
-        uses: m4nu56/postgresql-action@v1
-        with:
-          postgresql version: 16
-          postgresql db: ${{ env.dbname || 'test' }}
-          postgresql user: ${{ env.dbuser || 'test' }}
-          postgresql password: ${{ env.dbpass || 'test' }}
-
-      - name: Setting up DB mssql
-        if: ${{ inputs.dbtype == 'sqlsrv' }}
-        uses: praxisdigital/setup-mssql-server@dev
-        with:
-          version: 2022
-          user: ${{ env.dbuser || 'test' }}
-          password: ${{ env.dbpass || 'test' }}
-          database: ${{ env.dbname || 'test' }}
+          echo -e $plugins > $GITHUB_WORKSPACE/plugins.txt
 
       - name: Generate Moodle configuration
         env:
@@ -182,6 +137,150 @@ jobs:
           echo 'define("TEST_SESSION_REDIS_HOST", $host);' >> $GITHUB_WORKSPACE/config.php
           echo 'define("TEST_CACHESTORE_REDIS_TESTSERVERS", $host);' >> $GITHUB_WORKSPACE/config.php
           echo 'require_once(__DIR__ . "/lib/setup.php");' >> $GITHUB_WORKSPACE/config.php
+      
+      - name: Install plugins
+        run: |
+          
+          get_plugin_installation_dir () {
+            local component_name=$1
+            php -r "define('CLI_SCRIPT', 1); define('MOODLE_INTERNAL', 1); require '$GITHUB_WORKSPACE/config.php'; require_once '$GITHUB_WORKSPACE/lib/classes/component.php'; class_exists('core\component') === false && class_alias('core_component', '\core\component'); use core\component; [\$plugin_type, \$name] = component::normalize_component('$component_name'); \$plugin_types = component::get_plugin_types(); echo empty(\$plugin_types[\$plugin_type]) ? '' : \$plugin_types[\$plugin_type] . '/' . \$name;"
+          }
+
+          get_plugin_info () {
+            local plugin_dir=$1
+            local version_property=$2
+            local default_value=${3:-''}
+            php -r "define('MOODLE_INTERNAL', true); \$plugin = (object)[]; include('$plugin_dir/version.php'); echo \$plugin->${version_property} ?? '$default_value';"
+          }
+
+          get_repo_url () {
+            local repo=$1
+            if [[ $repo == "${{ inputs.org }}/"* ]]; then
+              echo "https://oauth2:${{ secrets.PRIVATE_REPO_TOKEN }}@github.com/${repo}.git"
+            else
+              echo "https://github.com/${repo}.git"
+            fi
+          }
+          
+          sync_repo () {
+            local repo_dir=$1
+            local ref=$2
+            git clone --quiet $url $repo_dir
+            git -C $repo_dir checkout --quiet $ref
+          }
+
+          copy_plugin_to_moodle () {
+            local repo=$1
+            local ref=$2
+            local url=$3
+            local repo_name=$4
+
+            plugin_tmp_dir=$GITHUB_WORKSPACE/_tmp/$repo_name
+            # Clone the plugin into temp folder
+            git clone --quiet $url $plugin_tmp_dir
+
+            # Read the plugin version.php
+            if [[ ! -f $plugin_tmp_dir/version.php ]]; then
+              printf "version.php not found in ${repo}@${ref}\n"
+              rm -rf $plugin_tmp_dir
+              return 1
+            fi
+
+            # Get component name
+            component=$(get_plugin_info $plugin_tmp_dir 'component')
+
+            # Get the plugin installation directory
+            plugin_dir=$(get_plugin_installation_dir $component)
+
+            # Move the plugin into the correct directory
+            if [[ $plugin_dir != '' ]]; then
+              mkdir -p $GITHUB_WORKSPACE/$plugin_dir
+              mv $plugin_tmp_dir $GITHUB_WORKSPACE/$plugin_dir
+            else
+              printf "Component not found for ${repo}@${ref}\n"
+              return 1
+            fi
+
+            printf "Installed ${repo}@${ref} to ${plugin_dir}\n"
+            rm -rf $plugin_tmp_dir
+          }
+
+          # Install the plugin
+          plugins=$(cat $GITHUB_WORKSPACE/plugins.txt)
+
+          # Plugin format is org/repo:path@ref
+          for plugin in $plugins; do
+            plugin=$(echo $plugin | tr -d ' ')
+            printf "Installing ${plugin}\n"
+            
+            # Check if plugin contains path
+            if [[ $plugin == *":"* ]]; then
+              repo=$(echo $plugin | cut -d: -f1)
+              path=$(echo $plugin | cut -d: -f2 | cut -d@ -f1)
+              ref=$(echo $plugin | cut -d@ -f2)
+              url=$(get_repo_url $repo)
+
+              git clone --quiet $url $GITHUB_WORKSPACE/$path
+
+              printf "Installed ${repo}@${ref} to ${path}\n"
+
+            # Check if plugin contains org
+            elif [[ $plugin == *"/"* ]]; then
+              repo=$(echo $plugin | cut -d@ -f1)
+              ref=$(echo $plugin | cut -d@ -f2)
+              repo_name=$(echo $repo | cut -d/ -f2)
+              url=$(get_repo_url $repo)
+
+              repo_tmp_dir=$GITHUB_WORKSPACE/_tmp/$repo_name
+
+              sync_repo $repo_tmp_dir $ref
+
+              copy_plugin_to_moodle $repo $ref $url $repo_name
+
+            # Check if plugin contains refencence
+            elif [[ $plugin == *"@"* ]]; then
+              repo=$(echo "${{ inputs.org }}/$plugin" | cut -d@ -f1)
+              ref=$(echo $plugin | cut -d@ -f2)
+              repo_name=$(echo $repo | cut -d/ -f2)
+              url=$(get_repo_url $repo)
+
+              repo_tmp_dir=$GITHUB_WORKSPACE/_tmp/$repo_name
+
+              sync_repo $repo_tmp_dir $ref
+
+              copy_plugin_to_moodle $repo $ref $url $repo_name
+              
+            fi
+          done
+
+      - name: Setting up DB mysql
+        if: ${{ inputs.dbtype == 'mysqli' }}
+        uses: johanmeiring/mysql-action@tmpfs-patch
+        with:
+          collation server: utf8mb4_danish_ci
+          mysql version: 9
+          mysql database: ${{ env.dbname || 'test' }}
+          mysql user: ${{ env.dbuser || 'test' }}
+          mysql password: ${{ env.dbpass || 'test' }}
+          use tmpfs: true
+
+      - name: Setting up DB pgsql
+        if: ${{ inputs.dbtype == 'pgsql' }}
+        uses: m4nu56/postgresql-action@v1
+        with:
+          postgresql version: 16
+          postgresql db: ${{ env.dbname || 'test' }}
+          postgresql user: ${{ env.dbuser || 'test' }}
+          postgresql password: ${{ env.dbpass || 'test' }}
+
+      - name: Setting up DB mssql
+        if: ${{ inputs.dbtype == 'sqlsrv' }}
+        uses: praxisdigital/setup-mssql-server@dev
+        with:
+          version: 2022
+          user: ${{ env.dbuser || 'test' }}
+          password: ${{ env.dbpass || 'test' }}
+          database: ${{ env.dbname || 'test' }}
 
       - name: Setting up PHPUnit
         env:

@@ -51,6 +51,7 @@ jobs:
       dbpass: test
       dbcollation: utf8mb4_unicode_ci
       plugins: ""
+      plugin_tmp_name: "_tmp/__self_plugin"
       #pathtophp: /usr/bin/php
     strategy:
       matrix:
@@ -74,12 +75,14 @@ jobs:
           repository: moodle/moodle
           ref: ${{ inputs.moodle }}
 
+      - name: Checking out code from ${{ github.repository }}
+        uses: actions/checkout@v4
+        with:
+          path: $GITHUB_WORKSPACE/${{ env.plugin_tmp_name }}
+          ref: ${{ github.ref }}
 
       - name: Prepare plugins
         run: |
-          # Adding the plugin repo into a list of dependencies
-          plugins="${{ github.repository }}@${{ github.ref }}"
-
           # Adding dependencies into the plugin list that contains path and ref
           dependencies="${{ inputs.dependencies }}"
           if [[ $dependencies != '' ]]; then
@@ -150,7 +153,7 @@ jobs:
             local plugin_dir=$1
             local version_property=$2
             local default_value=${3:-''}
-            php -r "define('MOODLE_INTERNAL', true); \$plugin = (object)[]; include('$plugin_dir/version.php'); echo \$plugin->${version_property} ?? '$default_value';"
+            php -r "define('CLI_SCRIPT', 1); define('MOODLE_INTERNAL', 1); require_once '$GITHUB_WORKSPACE/lib/classes/component.php'; \$plugin = (object)[]; include('$plugin_dir/version.php'); echo \$plugin->${version_property} ?? '$default_value';"
           }
 
           get_repo_url () {
@@ -163,10 +166,13 @@ jobs:
           }
           
           sync_repo () {
-            local repo_dir=$1
+            local url=$1
             local ref=$2
-            git clone --quiet $url $repo_dir
-            git -C $repo_dir checkout --quiet $ref
+            local repo_dir=$3
+            local repo=${4:-''}
+            printf "Syncing ${repo}@${ref}\n"
+            git clone $url $repo_dir
+            git --work-tree=. -C "$repo_dir" --git-dir="$repo_dir/.git" checkout $ref
           }
 
           copy_plugin_to_moodle () {
@@ -176,8 +182,6 @@ jobs:
             local repo_name=$4
 
             plugin_tmp_dir=$GITHUB_WORKSPACE/_tmp/$repo_name
-            # Clone the plugin into temp folder
-            git clone --quiet $url $plugin_tmp_dir
 
             # Read the plugin version.php
             if [[ ! -f $plugin_tmp_dir/version.php ]]; then
@@ -194,8 +198,8 @@ jobs:
 
             # Move the plugin into the correct directory
             if [[ $plugin_dir != '' ]]; then
-              mkdir -p $GITHUB_WORKSPACE/$plugin_dir
-              mv $plugin_tmp_dir $GITHUB_WORKSPACE/$plugin_dir
+              mkdir -p $plugin_dir
+              cp -r $plugin_tmp_dir/* $plugin_dir
             else
               printf "Component not found for ${repo}@${ref}\n"
               return 1
@@ -211,10 +215,11 @@ jobs:
           # Plugin format is org/repo:path@ref
           for plugin in $plugins; do
             plugin=$(echo $plugin | tr -d ' ')
-            printf "Installing ${plugin}\n"
             
             # Check if plugin contains path
             if [[ $plugin == *":"* ]]; then
+              printf "Installing with custom path $plugin\n"
+              
               repo=$(echo $plugin | cut -d: -f1)
 
               # Check if plugin contains org
@@ -224,14 +229,19 @@ jobs:
 
               path=$(echo $plugin | cut -d: -f2 | cut -d@ -f1)
               ref=$(echo $plugin | cut -d@ -f2)
+              repo_name=$(echo $repo | cut -d/ -f2)
               url=$(get_repo_url $repo)
 
-              git clone --quiet $url $GITHUB_WORKSPACE/$path
+              repo_tmp_dir=$GITHUB_WORKSPACE/_tmp/$repo_name
+
+              sync_repo $url $ref $repo_tmp_dir $repo
 
               printf "Installed ${repo}@${ref} to ${path}\n"
 
             # Check if plugin contains org
             elif [[ $plugin == *"/"* ]]; then
+              printf "Installing with organization $plugin\n"
+
               repo=$(echo $plugin | cut -d@ -f1)
               ref=$(echo $plugin | cut -d@ -f2)
               repo_name=$(echo $repo | cut -d/ -f2)
@@ -239,12 +249,14 @@ jobs:
 
               repo_tmp_dir=$GITHUB_WORKSPACE/_tmp/$repo_name
 
-              sync_repo $repo_tmp_dir $ref
+              sync_repo $url $ref $repo_tmp_dir $repo
 
               copy_plugin_to_moodle $repo $ref $url $repo_name
 
             # Check if plugin contains refencence
             elif [[ $plugin == *"@"* ]]; then
+              printf "Installing $plugin\n"
+
               repo=$(echo "${{ inputs.org }}/$plugin" | cut -d@ -f1)
               ref=$(echo $plugin | cut -d@ -f2)
               repo_name=$(echo $repo | cut -d/ -f2)
@@ -252,12 +264,34 @@ jobs:
 
               repo_tmp_dir=$GITHUB_WORKSPACE/_tmp/$repo_name
 
-              sync_repo $repo_tmp_dir $ref
+              sync_repo $url $ref $repo_tmp_dir $repo
 
               copy_plugin_to_moodle $repo $ref $url $repo_name
               
             fi
           done
+
+          # Add current repository dir to environment
+          # Get component name
+          plugin_current_dir="$GITHUB_WORKSPACE/${{ env.plugin_tmp_name }}"
+          plugin_component_name=$(get_plugin_info $plugin_current_dir 'component')
+
+          # Get the plugin installation directory
+          plugin_installation_dir=$(get_plugin_installation_dir $plugin_component_name)
+
+          # Move plugin to the correct directory
+          if [[ $plugin_installation_dir != '' ]]; then
+            mkdir -p $GITHUB_WORKSPACE/$plugin_installation_dir
+            cp -r $plugin_current_dir/* $GITHUB_WORKSPACE/$plugin_installation_dir
+            rm -rf $plugin_current_dir
+            printf "Installed ${plugin_component_name} to ${plugin_installation_dir}\n"
+          else
+            printf "Component not found for ${repo}@${ref}\n"
+            exit 1
+          fi
+
+          # Remove the temp folder
+          rm -rf $GITHUB_WORKSPACE/_tmp
 
       - name: Setting up DB mysql
         if: ${{ inputs.dbtype == 'mysqli' }}

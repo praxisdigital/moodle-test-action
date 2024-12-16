@@ -1,0 +1,185 @@
+name: moodle-test-action
+description: 'Run PHPUnit tests for Moodle'
+
+inputs:
+  php:
+    description: >
+      PHP version
+    required: false
+    default: '8.2'
+  db:
+    description: >
+      Database type
+    required: false
+    default: 'mysqli'
+  moodle:
+    description: >
+      Moodle branch
+    required: false
+    default: 'MOODLE_404_STABLE'
+  moodle_repo:
+    description: >
+      Moodle repository
+    required: false
+    default: 'moodle/moodle'
+  os:
+    description: >
+      Operating system
+    required: false
+    default: 'ubuntu-latest'
+  owner:
+    description: >
+      Repository owner (organization or user)
+    required: false
+    default: ${{ github.repository_owner }}
+  dependencies:
+    description: >
+      Plugin dependencies. You can specify multiple dependencies.
+      You can also use the environment variable DEPENDENCIES.
+      Format: 'user/repo:path@ref' or 'user/repo@ref'
+      Example: |
+        praxisdigital/assignsubmission_pxaiwriter:mod/assign/submission/pxaiwriter@master
+        praxisdigital/mod_smartlink:mod/smartlink@MOODLE_42_STABLE
+    required: false
+    default: ${{ env.DEPENDENCIES }}
+  experimental:
+    description: >
+      Is experimental run
+    required: false
+    default: false
+  dbname:
+    description: >
+      Database name
+    required: false
+    default: 'test'
+  dbuser:
+    description: >
+      Database user
+    required: false
+    default: 'test'
+  dbpass:
+    description: >
+      Database password
+    required: false
+    default: 'test'
+  token:
+    description: >
+      Token for private repositories
+    required: false
+    default: ${{ github.token }}
+  plugin_path:
+    description: >
+      Path to the plugin
+    required: false
+    default: ''
+
+runs:
+  using: 'composite'
+  env:
+    GITHUB_TOKEN: ${{ inputs.token }}
+    PLUGIN_PATH: ${{ inputs.plugin_path }}
+    
+  steps:
+    - name: Setting up scripts
+      shell: bash
+      run: |
+        cfg_setup=${{ github.action_path }}"/setup-config.sh"
+        install_deps=${{ github.action_path }}"/install-deps.sh"
+        
+        if [ ! -f "$cfg_setup" ]; then
+          echo "File $cfg_setup not found!"
+          exit 1
+        fi
+        if [ ! -f "$install_deps" ]; then
+          echo "File $install_deps not found!"
+          exit 1
+        fi
+
+        chmod +x $cfg_setup $install_deps
+
+    - name: Setting up PHP ${{ inputs.php }}
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: ${{ inputs.php }}
+        coverage: none
+        ini-values: 'max_input_vars=5000'
+
+    - name: Checkout ${{ inputs.moodle_repo }}
+      uses: actions/checkout@v4
+      with:
+        repository: ${{ inputs.moodle_repo }}
+        ref: ${{ inputs.moodle }}
+        path: ${{ github.workspace }}
+    
+    - name: Setting up Moodle config
+      shell: bash
+      env:
+        MOODLE_DIR: ${{ github.workspace }}
+      run: |
+        $cfg_setup
+        printf "Moodle has been configured\n"
+
+    - name: Checking out dependencies
+      shell: bash
+      if: ${{ inputs.dependencies != '' }}
+      env:
+        GITHUB_TOKEN: ${{ inputs.token }}
+        DEPENDENCIES: ${{ inputs.dependencies }}
+        VERSION_DIR: ${{ github.action_path }}/.versions
+        MOODLE_DIR: ${{ github.workspace }}
+      run: |
+        $install_deps
+
+    - name: Checkout ${{ github.repository }}
+      uses: actions/checkout@v4
+      env:
+        GITHUB_TOKEN: ${{ inputs.token }}
+      with:
+        repository: ${{ github.repository }}
+        ref: ${{ github.ref }}
+        path: ${{ github.workspace }}${{ env.PLUGIN_PATH }}
+
+    - name: Setting up DB mysql
+      if: ${{ matrix.db == 'mysqli' }}
+      uses: johanmeiring/mysql-action@tmpfs-patch
+      with:
+        collation server: utf8mb4_danish_ci
+        mysql version: 8
+        mysql database: ${{ inputs.dbname }}
+        mysql user: ${{ inputs.dbuser }}
+        mysql password: ${{ inputs.dbpass }}
+        use tmpfs: true
+
+    - name: Setting up DB pgsql
+      if: ${{ matrix.db == 'pgsql' }}
+      uses: m4nu56/postgresql-action@v1
+      with:
+        postgresql version: 16
+        postgresql db: ${{ inputs.dbname }}
+        postgresql user: ${{ inputs.dbuser }}
+        postgresql password: ${{ inputs.dbpass }}
+
+    - name: Setting up DB mssql
+      if: ${{ matrix.db == 'sqlsrv' }}
+      uses: praxisdigital/setup-mssql-server@dev
+      with:
+        version: 2019
+        user: ${{ inputs.dbuser }}
+        password: ${{ inputs.dbpass }}
+        database: ${{ inputs.dbname }}
+
+
+    - name: Configure Moodle & database
+      env:
+        dbtype: ${{ matrix.db }}
+      run: |
+        echo "pathtophp=$(which php)" >> $GITHUB_ENV
+        mkdir $GITHUB_WORKSPACE/../moodledata
+        sudo locale-gen en_AU.UTF-8
+        php $GITHUB_WORKSPACE/admin/tool/phpunit/cli/init.php --no-composer-self-update
+
+    - name: Running PHPUnit tests
+      env:
+        dbtype: ${{ matrix.db }}
+        component: ${{ inputs.plugin }}
+      run: $GITHUB_WORKSPACE/vendor/bin/phpunit -c $GITHUB_WORKSPACE/phpunit.xml --testsuite=${component}_testsuite -v --testdox --colors

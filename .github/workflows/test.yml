@@ -29,7 +29,12 @@ on:
         type: string
         default: 'praxisdigital'
       dependencies:
-        description: 'Dependencies. Comma separated list of org/repo:path@ref (e.g. praxisdigital/assignsubmission_pxaiwriter:mod/assign/submission/pxaiwriter@master,praxisdigital/mod_smartlink:mod/smartlink@MOODLE_42_STABLE)'
+        description: >
+          Plugin dependencies.
+          Format: user/repo:path@ref
+          Example: |
+            praxisdigital/assignsubmission_pxaiwriter:mod/assign/submission/pxaiwriter@master
+            praxisdigital/mod_smartlink:mod/smartlink@MOODLE_42_STABLE
         required: false
         type: string
         default: ''
@@ -115,12 +120,20 @@ jobs:
         if: ${{ inputs.dependencies != '' }}
         run: |
           # dependencies are in the format of org/repo:path@ref
-          dependencies=$(echo ${{ inputs.dependencies }} | tr ',' "\n")
+          dependencies="${{ inputs.dependencies }}"
+          if [[ -z $dependencies ]]; then
+            echo "No dependencies to checkout"
+            exit 0
+          fi
           for dep in $dependencies; do
             repo=$(echo $dep | cut -d: -f1)
             path=$(echo $dep | cut -d: -f2 | cut -d@ -f1)
             ref=$(echo $dep | cut -d@ -f2)
             url="https://github.com/${repo}.git"
+
+            if [ $path != /* ]; then
+              path="/$path"
+            fi
 
             if [[ $repo == ${{ inputs.org }}/* ]]; then
               printf "Checking out ${repo}@${ref}\n"

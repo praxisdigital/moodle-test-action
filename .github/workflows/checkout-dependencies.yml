@@ -1,0 +1,68 @@
+name: Add plugin dependencies
+
+on:
+  workflow_call:
+    inputs:
+      dependencies:
+        description: >
+          Plugin dependencies
+          Format: 'repo@ref' or 'owner/repo@ref'
+        required: false
+        type: string
+        default: ''
+      moodle_dir:
+        description: >
+          Moodle directory
+        required: false
+        type: string
+        default: ${{ github.workspace }}
+env:
+  REPO: ''
+  REF: ''
+
+jobs:
+  Fetching:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        repo: ${{ fromJson(inputs.dependencies) }}
+    steps:
+      - name: Prepare plugin information (${{ matrix.repo }})
+        run: |
+          # Extract repo and ref out of string
+          repo=$(echo ${{ matrix.repo }} | awk -F"@" '{print $1}')
+          ref=$(echo ${{ matrix.repo }} | awk -F"@" '{print $2}')
+          name=''
+
+          # Check if REPO contains owner
+          if [[ "$repo" != *"/"* ]]; then
+            name=$repo
+            repo=${{ github.repository_owner }}/$repo
+          else
+            name=$(echo $repo | cut -d'/' -f2)
+          fi
+
+          if [ -z "$repo" ]; then
+            echo "Unable to format repository from ${{ matrix.repo }}"
+            exit 1
+          fi
+
+          if [ -z "$ref" ]; then
+            printf "No reference provided, using 'HEAD'\n"
+            ref='HEAD'
+          fi
+
+          # Set environment variables
+          echo "REPO=$repo" >> $GITHUB_ENV
+          echo "REF=$ref" >> $GITHUB_ENV
+
+      - name: Checkout dependency (${{ matrix.repo }})
+        uses: praxisdigital/moodle-plugin-checkout@dev
+        if: matrix.repo != '' && env.REPO != '' && env.REF != ''
+        with:
+          repo: ${{ env.REPO }}
+          ref: ${{ env.REF }}
+          moodle_dir: ${{ inputs.moodle_dir }}

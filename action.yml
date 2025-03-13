@@ -14,7 +14,7 @@ inputs:
     default: 'mysqli'
   moodle:
     description: >
-      Moodle branch
+      Moodle commit, branch or tag
     required: false
     default: 'MOODLE_404_STABLE'
   moodle_repo:
@@ -36,12 +36,12 @@ inputs:
     description: >
       Plugin dependencies. You can specify multiple dependencies.
       You can also use the environment variable DEPENDENCIES.
-      Format: 'user/repo:path@ref' or 'user/repo@ref'
+      Format: 'repo@ref' or 'owner/repo@ref'
       Example: |
-        praxisdigital/assignsubmission_pxaiwriter:mod/assign/submission/pxaiwriter@master
-        praxisdigital/mod_smartlink:mod/smartlink@MOODLE_42_STABLE
+        praxisdigital/assignsubmission_pxaiwriter@master
+        mod_smartlink@MOODLE_42_STABLE
     required: false
-    default: ${{ env.DEPENDENCIES }}
+    default: ''
   experimental:
     description: >
       Is experimental run
@@ -67,36 +67,13 @@ inputs:
       Token for private repositories
     required: false
     default: ${{ github.token }}
-  plugin_path:
-    description: >
-      Path to the plugin
-    required: false
-    default: ''
 
 runs:
   using: 'composite'
   env:
-    GITHUB_TOKEN: ${{ inputs.token }}
-    PLUGIN_PATH: ${{ inputs.plugin_path }}
-    
+    MOODLE_DIR: ${{ github.workspace }}/moodle
   steps:
-    - name: Setting up scripts
-      shell: bash
-      run: |
-        cfg_setup=${{ github.action_path }}"/setup-config.sh"
-        install_deps=${{ github.action_path }}"/install-deps.sh"
-        
-        if [ ! -f "$cfg_setup" ]; then
-          echo "File $cfg_setup not found!"
-          exit 1
-        fi
-        if [ ! -f "$install_deps" ]; then
-          echo "File $install_deps not found!"
-          exit 1
-        fi
-
-        chmod +x $cfg_setup $install_deps
-
+    uses: actions/checkout@v4
     - name: Setting up PHP ${{ inputs.php }}
       uses: shivammathur/setup-php@v2
       with:
@@ -109,35 +86,90 @@ runs:
       with:
         repository: ${{ inputs.moodle_repo }}
         ref: ${{ inputs.moodle }}
-        path: ${{ github.workspace }}
+        path: ${{ env.MOODLE_DIR }}
     
     - name: Setting up Moodle config
       shell: bash
       env:
-        MOODLE_DIR: ${{ github.workspace }}
+        MOODLE_DIR: ${{ github.workspace }}/moodle
       run: |
-        $cfg_setup
+        moodle_dir=$MOODLE_DIR
+        echo '<?php' > $moodle_dir/config.php
+        echo 'class moodle_env {' >> $moodle_dir/config.php
+        echo '    public static function get_env(string $key, string $default = ""): string {' >> $moodle_dir/config.php
+        echo '        $value = getenv($key);' >> $moodle_dir/config.php
+        echo '        return empty($value) ? $default : $value;' >> $moodle_dir/config.php
+        echo '    }' >> $moodle_dir/config.php
+        echo '}' >> $moodle_dir/config.php
+        echo 'unset($CFG);' >> $moodle_dir/config.php
+        echo 'global $CFG;' >> $moodle_dir/config.php
+        echo '$CFG = new stdClass();' >> $moodle_dir/config.php
+        echo '$CFG->dbtype    = moodle_env::get_env("dbtype", "mysqli");' >> $moodle_dir/config.php
+        echo '$CFG->dblibrary = "native";' >> $moodle_dir/config.php
+        echo '$CFG->dbhost    = "127.0.0.1";' >> $moodle_dir/config.php
+        echo '$CFG->dbname    = moodle_env::get_env("dbname", "test");' >> $moodle_dir/config.php
+        echo '$CFG->dbuser    = moodle_env::get_env("dbuser", "test");' >> $moodle_dir/config.php
+        echo '$CFG->dbpass    = moodle_env::get_env("dbpass", "test");' >> $moodle_dir/config.php
+        echo '$CFG->prefix    = "m_";' >> $moodle_dir/config.php
+        echo '$CFG->dboptions = ["dbcollation" => moodle_env::get_env("dbcollation", "utf8mb4_unicode_ci")];' >> $moodle_dir/config.php
+        echo '$host = "localhost";' >> $moodle_dir/config.php
+        echo '$CFG->wwwroot   = "http://{$host}";' >> $moodle_dir/config.php
+        echo '$CFG->dataroot  = realpath(dirname(__DIR__)) . "/moodledata";' >> $moodle_dir/config.php
+        echo '$CFG->admin     = "admin";' >> $moodle_dir/config.php
+        echo '$CFG->directorypermissions = 0777;' >> $moodle_dir/config.php
+        echo '$CFG->debug = (E_ALL | E_STRICT);' >> $moodle_dir/config.php
+        echo '$CFG->debugdisplay = 1;' >> $moodle_dir/config.php
+        echo '$CFG->debugstringids = 1;' >> $moodle_dir/config.php
+        echo '$CFG->perfdebug = 15;' >> $moodle_dir/config.php
+        echo '$CFG->debugpageinfo = 1;' >> $moodle_dir/config.php
+        echo '$CFG->allowthemechangeonurl = 1;' >> $moodle_dir/config.php
+        echo '$CFG->passwordpolicy = 0;' >> $moodle_dir/config.php
+        echo '$CFG->cronclionly = 0;' >> $moodle_dir/config.php
+        echo '$CFG->pathtophp = moodle_env::get_env("pathtophp");' >> $moodle_dir/config.php
+        echo '$CFG->phpunit_dataroot  = realpath(dirname(__DIR__)) . "/phpunitdata";' >> $moodle_dir/config.php
+        echo '$CFG->phpunit_prefix = "t_";' >> $moodle_dir/config.php
+        echo 'define("TEST_EXTERNAL_FILES_HTTP_URL", "http://$host:8080");' >> $moodle_dir/config.php
+        echo 'define("TEST_EXTERNAL_FILES_HTTPS_URL", "http://$host:8080");' >> $moodle_dir/config.php
+        echo 'define("TEST_SESSION_REDIS_HOST", $host);' >> $moodle_dir/config.php
+        echo 'define("TEST_CACHESTORE_REDIS_TESTSERVERS", $host);' >> $moodle_dir/config.php
+        echo 'require_once(__DIR__ . "/lib/setup.php");' >> $moodle_dir/config.php
         printf "Moodle has been configured\n"
+    
+    - name: Prepare dependencies
+      if: ${{ inputs.dependencies }} != ''
+      shell: bash
+      run: |
+        # Convert dependencies lines to array in JSON
+        depencencies="${{ inputs.dependencies }}"
+        plugins=''
+        for plugin in $depencencies; do
+          plugins="$plugins\"$plugin\","
+        done
+
+        if [ -z "$plugins" ]; then
+          echo "Unable to convert dependencies into JSON. Check if the format is correct."
+          exit 1
+        fi
+
+        # Remove trailing comma
+        plugins="${plugins%,}"
+
+        # Set dependencies
+        echo "DEPENDENCIES=$plugins" >> $GITHUB_ENV
 
     - name: Checking out dependencies
-      shell: bash
-      if: ${{ inputs.dependencies != '' }}
-      env:
-        GITHUB_TOKEN: ${{ inputs.token }}
-        DEPENDENCIES: ${{ inputs.dependencies }}
-        VERSION_DIR: ${{ github.action_path }}/.versions
-        MOODLE_DIR: ${{ github.workspace }}
-      run: |
-        $install_deps
+      uses: praxisdigital/moodle-test-action/.github/workflows/checkout-dependencies.yml@test
+      if: ${{ env.DEPENDENCIES }} != ''
+      with:
+        dependencies: ${{ toJson(env.DEPENDENCIES) }}
+        moodle_dir: ${{ env.MOODLE_DIR }}
 
     - name: Checkout ${{ github.repository }}
-      uses: actions/checkout@v4
-      env:
-        GITHUB_TOKEN: ${{ inputs.token }}
+      uses: praxisdigital/moodle-plugin-checkout@dev
       with:
-        repository: ${{ github.repository }}
+        repo: ${{ github.repository }}
         ref: ${{ github.ref }}
-        path: ${{ github.workspace }}${{ env.PLUGIN_PATH }}
+        moodle_dir: ${{ env.MOODLE_DIR }}
 
     - name: Setting up DB mysql
       if: ${{ matrix.db == 'mysqli' }}
@@ -168,18 +200,19 @@ runs:
         password: ${{ inputs.dbpass }}
         database: ${{ inputs.dbname }}
 
-
     - name: Configure Moodle & database
+      shell: bash
       env:
         dbtype: ${{ matrix.db }}
       run: |
         echo "pathtophp=$(which php)" >> $GITHUB_ENV
-        mkdir $GITHUB_WORKSPACE/../moodledata
+        mkdir $MOODLE_DIR/../moodledata
         sudo locale-gen en_AU.UTF-8
-        php $GITHUB_WORKSPACE/admin/tool/phpunit/cli/init.php --no-composer-self-update
+        php $MOODLE_DIR/admin/tool/phpunit/cli/init.php --no-composer-self-update
 
     - name: Running PHPUnit tests
+      shell: bash
       env:
         dbtype: ${{ matrix.db }}
         component: ${{ inputs.plugin }}
-      run: $GITHUB_WORKSPACE/vendor/bin/phpunit -c $GITHUB_WORKSPACE/phpunit.xml --testsuite=${component}_testsuite -v --testdox --colors
+      run: $MOODLE_DIR/vendor/bin/phpunit -c $MOODLE_DIR/phpunit.xml --testsuite=${component}_testsuite -v --testdox --colors

@@ -72,7 +72,6 @@ jobs:
       dbuser: test
       dbpass: test
       dbcollation: utf8mb4_unicode_ci
-      #pathtophp: /usr/bin/php
     steps:
       - name: Setting up DB mysql
         if: ${{ matrix.db == 'mysqli' }}
@@ -119,27 +118,32 @@ jobs:
       - name: Checking out dependencies
         if: ${{ inputs.dependencies != '' }}
         run: |
-          # dependencies are in the format of org/repo:path@ref
+          # dependencies are in the format of org/repo@ref
           dependencies="${{ inputs.dependencies }}"
           if [[ -z $dependencies ]]; then
             echo "No dependencies to checkout"
             exit 0
           fi
           for dep in $dependencies; do
-            repo=$(echo $dep | cut -d: -f1)
-            path=$(echo $dep | cut -d: -f2 | cut -d@ -f1)
+            repo=$(echo $dep | cut -d@ -f1)
             ref=$(echo $dep | cut -d@ -f2)
             url="https://github.com/${repo}.git"
 
-            if [ $path != /* ]; then
-              path="/$path"
-            fi
+            # Get component name from version.php by cloning to a temp dir
+            tmpdir=$GITHUB_WORKSPACE/tmp
+            mkdir -p $tmpdir
+            git clone --quiet $url $tmpdir/$repo
+            component=$(cat $tmpdir/$repo/version.php | sed -En 's/\s*\$plugin->component\s*=\s*(.*)\s*;/\1/p' | cut -d"'" -f2 | cut -d'"' -f2)
+            rm -rf $tmpdir/$repo
+
+            # Calculate the path to clone to inside moodle based on component name
+            path=$(php -r "CONST CLI_SCRIPT = true; require_once '$GITHUB_WORKSPACE/moodle/config.php'; require_once '$GITHUB_WORKSPACE/moodle/lib/classes/component.php'; class_exists('core\\component') === false && class_alias('core_component', '\\core\\component'); use core\\component; [$plugin_type, $name] = component::normalize_component('$component'); $plugin_types = component::get_plugin_types();echo empty($plugin_types[$plugin_type]) ? '' : $plugin_types[$plugin_type] . '/' . $name;")
 
             if [[ $repo == ${{ inputs.org }}/* ]]; then
-              printf "Checking out ${repo}@${ref}\n"
+              printf "Checking out ${repo}@${ref} from github.com\n"
               url="https://oauth2:${{ secrets.PRIVATE_REPO_TOKEN }}@github.com/${repo}.git"
             else
-              printf "Checking out (public) ${repo}@${ref}\n"
+              printf "Checking out (public) ${repo}@${ref} from github.com\n"
             fi
             git clone --quiet $url $GITHUB_WORKSPACE/$path
             git -C $GITHUB_WORKSPACE/$path checkout $ref

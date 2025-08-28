@@ -174,9 +174,9 @@ runs:
           echo "Auto determined path: $path"
 
           echo "Cloning $repo@$ref using $url to $path ..."
-          ls -lah $path
           git clone $url $path
           git -C $path checkout $ref
+          ls -lah $path
         done
 
     - name: Check out code from ${{ github.repository }}

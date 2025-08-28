@@ -118,7 +118,7 @@ runs:
         echo "\$CFG->dataroot  = '$GITHUB_WORKSPACE/moodledata';" >> $GITHUB_WORKSPACE/moodle/config.php
         echo '$CFG->admin     = "admin";' >> $GITHUB_WORKSPACE/moodle/config.php
         echo '$CFG->directorypermissions = 0777;' >> $GITHUB_WORKSPACE/moodle/config.php
-        echo '$CFG->debug = (E_ALL | E_STRICT);' >> $GITHUB_WORKSPACE/moodle/config.php
+        echo '$CFG->debug = (E_ALL);' >> $GITHUB_WORKSPACE/moodle/config.php
         echo '$CFG->debugdisplay = 1;' >> $GITHUB_WORKSPACE/moodle/config.php
         echo '$CFG->debugstringids = 1;' >> $GITHUB_WORKSPACE/moodle/config.php
         echo '$CFG->perfdebug = 15;' >> $GITHUB_WORKSPACE/moodle/config.php

@@ -158,15 +158,17 @@ runs:
           fi
 
           # Get component name from version.php by cloning to a temp dir
+          echo "Auto determining component name for repo: $repo ..."
           tmpdir=$GITHUB_WORKSPACE/tmp
           mkdir -p $tmpdir
           git clone --quiet $url $tmpdir/$repo
           component=$(cat $tmpdir/$repo/version.php | sed -En 's/\s*\$plugin->component\s*=\s*(.*)\s*;/\1/p' | cut -d"'" -f2 | cut -d'"' -f2)
           rm -rf $tmpdir/$repo
+          echo "Auto determined component name: $component"
 
           # Calculate the path to clone to inside moodle based on component name
+          echo "Auto determining path for component: $component ..."
           path=$(php -r "CONST CLI_SCRIPT = true; require_once '$GITHUB_WORKSPACE/moodle/config.php'; require_once '$GITHUB_WORKSPACE/moodle/lib/classes/component.php'; class_exists('core\\component') === false && class_alias('core_component', '\\core\\component'); use core\\component; [\$plugin_type, \$name] = component::normalize_component('$component'); \$plugin_types = component::get_plugin_types();echo empty(\$plugin_types[\$plugin_type]) ? '' : \$plugin_types[\$plugin_type] . '/' . \$name;")
-
           echo "Auto determined path: $path"
 
           git clone --quiet $url $GITHUB_WORKSPACE/moodle/$path

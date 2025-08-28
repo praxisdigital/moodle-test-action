@@ -46,38 +46,38 @@ runs:
   using: 'composite'
   steps:
     - name: Setting up DB mysql
-      if: ${{ matrix.db == 'mysqli' }}
+      if: ${{ inputs.dbtype == 'mysqli' }}
       uses: johanmeiring/mysql-action@tmpfs-patch
       with:
         collation server: utf8mb4_danish_ci
         mysql version: 8
-        mysql database: ${{ env.dbname }}
-        mysql user: ${{ env.dbuser }}
-        mysql password: ${{ env.dbpass }}
+        mysql database: test
+        mysql user: test
+        mysql password: test
         use tmpfs: true
 
     - name: Setting up DB pgsql
-      if: ${{ matrix.db == 'pgsql' }}
+      if: ${{ inputs.dbtype == 'pgsql' }}
       uses: m4nu56/postgresql-action@v1
       with:
         postgresql version: 16
-        postgresql db: ${{ env.dbname }}
-        postgresql user: ${{ env.dbuser }}
-        postgresql password: ${{ env.dbpass }}
+        postgresql db: test
+        postgresql user: test
+        postgresql password: test
 
     - name: Setting up DB mssql
-      if: ${{ matrix.db == 'sqlsrv' }}
+      if: ${{ inputs.dbtype == 'sqlsrv' }}
       uses: praxisdigital/setup-mssql-server@dev
       with:
         version: 2022
-        user: ${{ env.dbuser }}
-        password: ${{ env.dbpass }}
-        database: ${{ env.dbname }}
+        user: test
+        password: test
+        database: test
 
     - name: Setting up PHP ${{ matrix.php }}
       uses: shivammathur/setup-php@v2
       with:
-        php-version: ${{ matrix.php }}
+        php-version: ${{ inputs.php }}
         coverage: none
         ini-values: 'max_input_vars=5000'
 
@@ -85,7 +85,7 @@ runs:
       uses: actions/checkout@v4
       with:
         repository: moodle/moodle
-        ref: ${{ matrix.moodle }}
+        ref: ${{ inputs.moodle }}
 
     - name: Checking out dependencies
       if: ${{ inputs.dependencies != '' }}
@@ -130,6 +130,8 @@ runs:
 
     - name: Setting up Moodle config
       shell: bash
+      env:
+        dbtype: ${{ inputs.dbtype }}
       run: |
         echo '<?php' >> $GITHUB_WORKSPACE/config.php
         echo 'class moodle_env {' >> $GITHUB_WORKSPACE/config.php
@@ -173,7 +175,7 @@ runs:
 
     - name: Setting up PHPUnit
       env:
-        dbtype: ${{ matrix.db }}
+        dbtype: ${{ inputs.dbtype }}
       shell: bash
       run: |
         echo "pathtophp=$(which php)" >> $GITHUB_ENV # Inject installed pathtophp to env. The template config needs it.
@@ -184,6 +186,6 @@ runs:
     - name: Running PHPUnit tests
       shell: bash
       env:
-        dbtype: ${{ matrix.db }}
+        dbtype: ${{ inputs.dbtype }}
         component: ${{ inputs.plugin }}
       run: $GITHUB_WORKSPACE/vendor/bin/phpunit -c $GITHUB_WORKSPACE/phpunit.xml --testsuite=${component}_testsuite -v --testdox --colors

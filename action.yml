@@ -115,7 +115,7 @@ runs:
         echo '$CFG->dboptions = ["dbcollation" => moodle_env::get_env("dbcollation", "utf8mb4_unicode_ci")];' >> $GITHUB_WORKSPACE/moodle/config.php
         echo '$host = "localhost";' >> $GITHUB_WORKSPACE/moodle/config.php
         echo '$CFG->wwwroot   = "http://{$host}";' >> $GITHUB_WORKSPACE/moodle/config.php
-        echo "$CFG->dataroot  = '$GITHUB_WORKSPACE/moodledata';" >> $GITHUB_WORKSPACE/moodle/config.php
+        echo "\$CFG->dataroot  = '$GITHUB_WORKSPACE/moodledata';" >> $GITHUB_WORKSPACE/moodle/config.php
         echo '$CFG->admin     = "admin";' >> $GITHUB_WORKSPACE/moodle/config.php
         echo '$CFG->directorypermissions = 0777;' >> $GITHUB_WORKSPACE/moodle/config.php
         echo '$CFG->debug = (E_ALL | E_STRICT);' >> $GITHUB_WORKSPACE/moodle/config.php

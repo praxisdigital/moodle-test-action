@@ -92,6 +92,8 @@ runs:
       env:
         dbtype: ${{ inputs.dbtype }}
       run: |
+        mkdir -p $GITHUB_WORKSPACE/moodle
+        touch $GITHUB_WORKSPACE/moodle/config.php
         echo '<?php' >> $GITHUB_WORKSPACE/moodle/config.php
         echo 'class moodle_env {' >> $GITHUB_WORKSPACE/moodle/config.php
         echo '    public static function get_env(string $key, string $default = ""): string {' >> $GITHUB_WORKSPACE/moodle/config.php

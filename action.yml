@@ -86,14 +86,13 @@ runs:
       with:
         repository: moodle/moodle
         ref: ${{ inputs.moodle }}
-        path: $GITHUB_WORKSPACE/moodle
+        path: ${{ github.workspace }}/moodle
 
     - name: Setting up Moodle config
       shell: bash
       env:
         dbtype: ${{ inputs.dbtype }}
       run: |
-        mkdir -p $GITHUB_WORKSPACE/moodle
         touch $GITHUB_WORKSPACE/moodle/config.php
         echo '<?php' >> $GITHUB_WORKSPACE/moodle/config.php
         echo 'class moodle_env {' >> $GITHUB_WORKSPACE/moodle/config.php

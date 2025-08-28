@@ -86,6 +86,7 @@ runs:
       with:
         repository: moodle/moodle
         ref: ${{ inputs.moodle }}
+        path: $GITHUB_WORKSPACE/moodle
 
     - name: Setting up Moodle config
       shell: bash
@@ -175,7 +176,7 @@ runs:
     - name: Check out code from ${{ github.repository }}
       uses: actions/checkout@v4
       with:
-        path: ${{ github.workspace }}${{ inputs.plugin-path }}
+        path: ${{ github.workspace }}/moodle/${{ inputs.plugin-path }}
         ref: ${{ github.ref }}
 
     - name: Setting up PHPUnit
@@ -186,11 +187,11 @@ runs:
         echo "pathtophp=$(which php)" >> $GITHUB_ENV # Inject installed pathtophp to env. The template config needs it.
         mkdir $GITHUB_WORKSPACE/../moodledata
         sudo locale-gen en_AU.UTF-8
-        php $GITHUB_WORKSPACE/admin/tool/phpunit/cli/init.php --no-composer-self-update
+        php $GITHUB_WORKSPACE/moodle/admin/tool/phpunit/cli/init.php --no-composer-self-update
 
     - name: Running PHPUnit tests
       shell: bash
       env:
         dbtype: ${{ inputs.dbtype }}
         component: ${{ inputs.plugin }}
-      run: $GITHUB_WORKSPACE/vendor/bin/phpunit -c $GITHUB_WORKSPACE/phpunit.xml --testsuite=${component}_testsuite -v --testdox --colors
+      run: $GITHUB_WORKSPACE/moodle/vendor/bin/phpunit -c $GITHUB_WORKSPACE/moodle/phpunit.xml --testsuite=${component}_testsuite -v --testdox --colors

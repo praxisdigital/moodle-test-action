@@ -2,152 +2,58 @@ name: moodle-test-action
 description: 'Run PHPUnit tests for Moodle'
 
 inputs:
+  plugin:
+    description: 'Plugin name (component name)'
+    required: true
+  plugin-path:
+    description: 'Plugin path'
+    required: true
   php:
-    description: >
-      PHP version
-    required: false
-    default: '8.2'
-  db:
-    description: >
-      Database type
-    required: false
-    default: 'mysqli'
+    description: 'PHP version'
+    required: true
   moodle:
-    description: >
-      Moodle branch
-    required: false
-    default: 'MOODLE_404_STABLE'
-  moodle_repo:
-    description: >
-      Moodle repository
-    required: false
-    default: 'moodle/moodle'
+    description: 'Moodle version (branch, tag or commit)'
+    required: true
   os:
-    description: >
-      Operating system
+    description: 'Operating system'
+    required: true
+  org:
+    description: 'Organization'
     required: false
-    default: 'ubuntu-latest'
-  owner:
-    description: >
-      Repository owner (organization or user)
-    required: false
-    default: ${{ github.repository_owner }}
+    default: 'praxisdigital'
   dependencies:
     description: >
-      Plugin dependencies. You can specify multiple dependencies.
-      You can also use the environment variable DEPENDENCIES.
-      Format: 'user/repo:path@ref' or 'user/repo@ref'
+      Plugin dependencies.
+      Format: user/repo:path@ref
       Example: |
         praxisdigital/assignsubmission_pxaiwriter:mod/assign/submission/pxaiwriter@master
         praxisdigital/mod_smartlink:mod/smartlink@MOODLE_42_STABLE
     required: false
-    default: ${{ env.DEPENDENCIES }}
-  experimental:
-    description: >
-      Is experimental run
-    required: false
-    default: false
-  dbname:
-    description: >
-      Database name
-    required: false
-    default: 'test'
-  dbuser:
-    description: >
-      Database user
-    required: false
-    default: 'test'
-  dbpass:
-    description: >
-      Database password
-    required: false
-    default: 'test'
-  token:
-    description: >
-      Token for private repositories
-    required: false
-    default: ${{ github.token }}
-  plugin_path:
-    description: >
-      Path to the plugin
-    required: false
     default: ''
+  dbtype:
+    description: 'Database type (mysqli, pgsql, sqlsrv)'
+    required: false
+    default: 'mysqli'
+  experimental:
+    description: 'Is experimental run'
+    required: false
+    default: 'false'
+  PRIVATE_REPO_TOKEN:
+    description: 'Token for private repositories'
+    required: true
 
 runs:
   using: 'composite'
-  env:
-    GITHUB_TOKEN: ${{ inputs.token }}
-    PLUGIN_PATH: ${{ inputs.plugin_path }}
-    
   steps:
-    - name: Setting up scripts
-      shell: bash
-      run: |
-        cfg_setup=${{ github.action_path }}"/setup-config.sh"
-        install_deps=${{ github.action_path }}"/install-deps.sh"
-        
-        if [ ! -f "$cfg_setup" ]; then
-          echo "File $cfg_setup not found!"
-          exit 1
-        fi
-        if [ ! -f "$install_deps" ]; then
-          echo "File $install_deps not found!"
-          exit 1
-        fi
-
-        chmod +x $cfg_setup $install_deps
-
-    - name: Setting up PHP ${{ inputs.php }}
-      uses: shivammathur/setup-php@v2
-      with:
-        php-version: ${{ inputs.php }}
-        coverage: none
-        ini-values: 'max_input_vars=5000'
-
-    - name: Checkout ${{ inputs.moodle_repo }}
-      uses: actions/checkout@v4
-      with:
-        repository: ${{ inputs.moodle_repo }}
-        ref: ${{ inputs.moodle }}
-        path: ${{ github.workspace }}
-    
-    - name: Setting up Moodle config
-      shell: bash
-      env:
-        MOODLE_DIR: ${{ github.workspace }}
-      run: |
-        $cfg_setup
-        printf "Moodle has been configured\n"
-
-    - name: Checking out dependencies
-      shell: bash
-      if: ${{ inputs.dependencies != '' }}
-      env:
-        GITHUB_TOKEN: ${{ inputs.token }}
-        DEPENDENCIES: ${{ inputs.dependencies }}
-        VERSION_DIR: ${{ github.action_path }}/.versions
-        MOODLE_DIR: ${{ github.workspace }}
-      run: |
-        $install_deps
-
-    - name: Checkout ${{ github.repository }}
-      uses: actions/checkout@v4
-      env:
-        GITHUB_TOKEN: ${{ inputs.token }}
-      with:
-        repository: ${{ github.repository }}
-        ref: ${{ github.ref }}
-        path: ${{ github.workspace }}${{ env.PLUGIN_PATH }}
-
     - name: Setting up DB mysql
       if: ${{ matrix.db == 'mysqli' }}
       uses: johanmeiring/mysql-action@tmpfs-patch
       with:
         collation server: utf8mb4_danish_ci
         mysql version: 8
-        mysql database: ${{ inputs.dbname }}
-        mysql user: ${{ inputs.dbuser }}
-        mysql password: ${{ inputs.dbpass }}
+        mysql database: ${{ env.dbname }}
+        mysql user: ${{ env.dbuser }}
+        mysql password: ${{ env.dbpass }}
         use tmpfs: true
 
     - name: Setting up DB pgsql
@@ -155,30 +61,128 @@ runs:
       uses: m4nu56/postgresql-action@v1
       with:
         postgresql version: 16
-        postgresql db: ${{ inputs.dbname }}
-        postgresql user: ${{ inputs.dbuser }}
-        postgresql password: ${{ inputs.dbpass }}
+        postgresql db: ${{ env.dbname }}
+        postgresql user: ${{ env.dbuser }}
+        postgresql password: ${{ env.dbpass }}
 
     - name: Setting up DB mssql
       if: ${{ matrix.db == 'sqlsrv' }}
       uses: praxisdigital/setup-mssql-server@dev
       with:
-        version: 2019
-        user: ${{ inputs.dbuser }}
-        password: ${{ inputs.dbpass }}
-        database: ${{ inputs.dbname }}
+        version: 2022
+        user: ${{ env.dbuser }}
+        password: ${{ env.dbpass }}
+        database: ${{ env.dbname }}
 
+    - name: Setting up PHP ${{ matrix.php }}
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: ${{ matrix.php }}
+        coverage: none
+        ini-values: 'max_input_vars=5000'
 
-    - name: Configure Moodle & database
+    - name: Checking out code from moodle/moodle
+      uses: actions/checkout@v4
+      with:
+        repository: moodle/moodle
+        ref: ${{ matrix.moodle }}
+
+    - name: Checking out dependencies
+      if: ${{ inputs.dependencies != '' }}
+      shell: bash
+      run: |
+        # dependencies are in the format of org/repo@ref
+        dependencies="${{ inputs.dependencies }}"
+        if [[ -z $dependencies ]]; then
+          echo "No dependencies to checkout"
+          exit 0
+        fi
+        for dep in $dependencies; do
+          repo=$(echo $dep | cut -d@ -f1)
+          ref=$(echo $dep | cut -d@ -f2)
+          url="https://github.com/${repo}.git"
+
+          # Get component name from version.php by cloning to a temp dir
+          tmpdir=$GITHUB_WORKSPACE/tmp
+          mkdir -p $tmpdir
+          git clone --quiet $url $tmpdir/$repo
+          component=$(cat $tmpdir/$repo/version.php | sed -En 's/\s*\$plugin->component\s*=\s*(.*)\s*;/\1/p' | cut -d"'" -f2 | cut -d'"' -f2)
+          rm -rf $tmpdir/$repo
+
+          # Calculate the path to clone to inside moodle based on component name
+          path=$(php -r "CONST CLI_SCRIPT = true; require_once '$GITHUB_WORKSPACE/moodle/config.php'; require_once '$GITHUB_WORKSPACE/moodle/lib/classes/component.php'; class_exists('core\\component') === false && class_alias('core_component', '\\core\\component'); use core\\component; [$plugin_type, $name] = component::normalize_component('$component'); $plugin_types = component::get_plugin_types();echo empty($plugin_types[$plugin_type]) ? '' : $plugin_types[$plugin_type] . '/' . $name;")
+
+          if [[ $repo == ${{ inputs.org }}/* ]]; then
+            printf "Checking out ${repo}@${ref} from github.com\n"
+            url="https://oauth2:${{ secrets.PRIVATE_REPO_TOKEN }}@github.com/${repo}.git"
+          else
+            printf "Checking out (public) ${repo}@${ref} from github.com\n"
+          fi
+          git clone --quiet $url $GITHUB_WORKSPACE/$path
+          git -C $GITHUB_WORKSPACE/$path checkout $ref
+        done
+
+    - name: Check out code from ${{ github.repository }}
+      uses: actions/checkout@v4
+      with:
+        path: ${{ github.workspace }}${{ inputs.plugin-path }}
+        ref: ${{ github.ref }}
+
+    - name: Setting up Moodle config
+      shell: bash
+      run: |
+        echo '<?php' >> $GITHUB_WORKSPACE/config.php
+        echo 'class moodle_env {' >> $GITHUB_WORKSPACE/config.php
+        echo '    public static function get_env(string $key, string $default = ""): string {' >> $GITHUB_WORKSPACE/config.php
+        echo '        $value = getenv($key);' >> $GITHUB_WORKSPACE/config.php
+        echo '        return empty($value) ? $default : $value;' >> $GITHUB_WORKSPACE/config.php
+        echo '    }' >> $GITHUB_WORKSPACE/config.php
+        echo '}' >> $GITHUB_WORKSPACE/config.php
+        echo 'unset($CFG);' >> $GITHUB_WORKSPACE/config.php
+        echo 'global $CFG;' >> $GITHUB_WORKSPACE/config.php
+        echo '$CFG = new stdClass();' >> $GITHUB_WORKSPACE/config.php
+        echo '$CFG->dbtype    = moodle_env::get_env("dbtype", "mysqli");' >> $GITHUB_WORKSPACE/config.php
+        echo '$CFG->dblibrary = "native";' >> $GITHUB_WORKSPACE/config.php
+        echo '$CFG->dbhost    = "127.0.0.1";' >> $GITHUB_WORKSPACE/config.php
+        echo '$CFG->dbname    = moodle_env::get_env("dbname", "test");' >> $GITHUB_WORKSPACE/config.php
+        echo '$CFG->dbuser    = moodle_env::get_env("dbuser", "test");' >> $GITHUB_WORKSPACE/config.php
+        echo '$CFG->dbpass    = moodle_env::get_env("dbpass", "test");' >> $GITHUB_WORKSPACE/config.php
+        echo '$CFG->prefix    = "m_";' >> $GITHUB_WORKSPACE/config.php
+        echo '$CFG->dboptions = ["dbcollation" => moodle_env::get_env("dbcollation", "utf8mb4_unicode_ci")];' >> $GITHUB_WORKSPACE/config.php
+        echo '$host = "localhost";' >> $GITHUB_WORKSPACE/config.php
+        echo '$CFG->wwwroot   = "http://{$host}";' >> $GITHUB_WORKSPACE/config.php
+        echo '$CFG->dataroot  = realpath(dirname(__DIR__)) . "/moodledata";' >> $GITHUB_WORKSPACE/config.php
+        echo '$CFG->admin     = "admin";' >> $GITHUB_WORKSPACE/config.php
+        echo '$CFG->directorypermissions = 0777;' >> $GITHUB_WORKSPACE/config.php
+        echo '$CFG->debug = (E_ALL | E_STRICT);' >> $GITHUB_WORKSPACE/config.php
+        echo '$CFG->debugdisplay = 1;' >> $GITHUB_WORKSPACE/config.php
+        echo '$CFG->debugstringids = 1;' >> $GITHUB_WORKSPACE/config.php
+        echo '$CFG->perfdebug = 15;' >> $GITHUB_WORKSPACE/config.php
+        echo '$CFG->debugpageinfo = 1;' >> $GITHUB_WORKSPACE/config.php
+        echo '$CFG->allowthemechangeonurl = 1;' >> $GITHUB_WORKSPACE/config.php
+        echo '$CFG->passwordpolicy = 0;' >> $GITHUB_WORKSPACE/config.php
+        echo '$CFG->cronclionly = 0;' >> $GITHUB_WORKSPACE/config.php
+        echo '$CFG->pathtophp = moodle_env::get_env("pathtophp");' >> $GITHUB_WORKSPACE/config.php
+        echo '$CFG->phpunit_dataroot  = realpath(dirname(__DIR__)) . "/phpunitdata";' >> $GITHUB_WORKSPACE/config.php
+        echo '$CFG->phpunit_prefix = "t_";' >> $GITHUB_WORKSPACE/config.php
+        echo 'define("TEST_EXTERNAL_FILES_HTTP_URL", "http://$host:8080");' >> $GITHUB_WORKSPACE/config.php
+        echo 'define("TEST_EXTERNAL_FILES_HTTPS_URL", "http://$host:8080");' >> $GITHUB_WORKSPACE/config.php
+        echo 'define("TEST_SESSION_REDIS_HOST", $host);' >> $GITHUB_WORKSPACE/config.php
+        echo 'define("TEST_CACHESTORE_REDIS_TESTSERVERS", $host);' >> $GITHUB_WORKSPACE/config.php
+        echo 'require_once(__DIR__ . "/lib/setup.php");' >> $GITHUB_WORKSPACE/config.php
+
+    - name: Setting up PHPUnit
       env:
         dbtype: ${{ matrix.db }}
+      shell: bash
       run: |
-        echo "pathtophp=$(which php)" >> $GITHUB_ENV
+        echo "pathtophp=$(which php)" >> $GITHUB_ENV # Inject installed pathtophp to env. The template config needs it.
         mkdir $GITHUB_WORKSPACE/../moodledata
         sudo locale-gen en_AU.UTF-8
         php $GITHUB_WORKSPACE/admin/tool/phpunit/cli/init.php --no-composer-self-update
 
     - name: Running PHPUnit tests
+      shell: bash
       env:
         dbtype: ${{ matrix.db }}
         component: ${{ inputs.plugin }}

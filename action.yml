@@ -169,7 +169,7 @@ runs:
 
           # Calculate the path to clone to inside moodle based on component name
           echo "Auto determining path for component: $component ..."
-          php -r "CONST CLI_SCRIPT = true; require_once '$GITHUB_WORKSPACE/moodle/config.php'; global $CFG; print_r($CFG->dbtype); die();"
+          php -r "CONST CLI_SCRIPT = true; require_once '$GITHUB_WORKSPACE/moodle/config.php'; print_r(\$CFG->dbtype); die();"
           path=$(php -r "CONST CLI_SCRIPT = true; require_once '$GITHUB_WORKSPACE/moodle/config.php'; require_once '$GITHUB_WORKSPACE/moodle/lib/classes/component.php'; class_exists('core\\component') === false && class_alias('core_component', '\\core\\component'); use core\\component; [\$plugin_type, \$name] = component::normalize_component('$component'); \$plugin_types = component::get_plugin_types();echo empty(\$plugin_types[\$plugin_type]) ? '' : \$plugin_types[\$plugin_type] . '/' . \$name;")
           echo "Auto determined path: $path"
 

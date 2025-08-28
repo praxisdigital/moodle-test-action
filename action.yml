@@ -67,7 +67,7 @@ runs:
 
     - name: Setting up DB mssql
       if: ${{ inputs.dbtype == 'sqlsrv' }}
-      uses: praxisdigital/setup-mssql-server@dev
+      uses: praxisdigital/setup-mssql-server@main
       with:
         version: 2022
         user: test
@@ -176,7 +176,6 @@ runs:
           echo "Cloning $repo@$ref using $url to $path ..."
           git clone $url $path
           git -C $path checkout $ref
-          ls -lah $path
         done
 
     - name: Check out code from ${{ github.repository }}

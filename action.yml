@@ -114,7 +114,7 @@ runs:
 
           if [[ $repo == ${{ inputs.org }}/* ]]; then
             printf "Checking out ${repo}@${ref} from github.com\n"
-            url="https://oauth2:${{ secrets.PRIVATE_REPO_TOKEN }}@github.com/${repo}.git"
+            url="https://oauth2:${{ inputs.PRIVATE_REPO_TOKEN }}@github.com/${repo}.git"
           else
             printf "Checking out (public) ${repo}@${ref} from github.com\n"
           fi

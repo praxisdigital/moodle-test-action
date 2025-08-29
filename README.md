@@ -1,0 +1,1 @@
+See `.github/workflows/example.yml` for an example of how to use.

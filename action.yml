@@ -141,7 +141,7 @@ runs:
         echo '$CFG->dboptions = [' >> $GITHUB_WORKSPACE/moodle/config.php
         echo '    "dbcollation" => "utf8mb4_unicode_ci",' >> $GITHUB_WORKSPACE/moodle/config.php
         echo '    "extrainfo" => [' >> $GITHUB_WORKSPACE/moodle/config.php
-        echo '        "trustservercertificate" => true' >> $GITHUB_WORKSPACE/moodle/config.php
+        echo '        "TrustServerCertificate" => true' >> $GITHUB_WORKSPACE/moodle/config.php
         echo '    ]' >> $GITHUB_WORKSPACE/moodle/config.php
         echo '];' >> $GITHUB_WORKSPACE/moodle/config.php
         echo '$host = "localhost";' >> $GITHUB_WORKSPACE/moodle/config.php
@@ -226,4 +226,4 @@ runs:
       shell: bash
       env:
         component: ${{ inputs.plugin }}
-      run: $GITHUB_WORKSPACE/moodle/vendor/bin/phpunit -c $GITHUB_WORKSPACE/moodle/phpunit.xml --testsuite=${component}_testsuite -v --testdox --colors
+      run: $GITHUB_WORKSPACE/moodle/vendor/bin/phpunit -c $GITHUB_WORKSPACE/moodle/phpunit.xml --testsuite=${component}_testsuite --testdox --colors

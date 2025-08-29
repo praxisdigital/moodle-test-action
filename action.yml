@@ -108,8 +108,6 @@ runs:
         echo 'export PATH="$PATH:/opt/mssql-tools18/bin"' >> ~/.bashrc
         source ~/.bashrc
         sudo apt-get install -y unixodbc-dev
-        #sudo sh -c "printf \"; priority=20\nextension=sqlsrv.so\n\" > /etc/php/$PHP_VERSION/mods-available/sqlsrv.ini"
-        #sudo sh -c "printf \"; priority=30\nextension=pdo_sqlsrv.so\n\" > /etc/php/$PHP_VERSION/mods-available/pdo_sqlsrv.ini"
         sudo phpenmod -v $PHP_VERSION sqlsrv pdo_sqlsrv
         php -m | grep -q 'sqlsrv' && echo "sqlsrv extension installed"
         php -m | grep -q 'pdo_sqlsrv' && echo "pdo_sqlsrv extension installed"
@@ -140,7 +138,7 @@ runs:
         echo '$CFG->dbuser    = "test";' >> $GITHUB_WORKSPACE/moodle/config.php
         echo '$CFG->dbpass    = "test";' >> $GITHUB_WORKSPACE/moodle/config.php
         echo '$CFG->prefix    = "m_";' >> $GITHUB_WORKSPACE/moodle/config.php
-        echo '$CFG->dboptions = ["dbcollation" => "utf8mb4_unicode_ci"];' >> $GITHUB_WORKSPACE/moodle/config.php
+        echo '$CFG->dboptions = ["dbcollation" => "utf8mb4_unicode_ci", "trustservercertificate" => true];' >> $GITHUB_WORKSPACE/moodle/config.php
         echo '$host = "localhost";' >> $GITHUB_WORKSPACE/moodle/config.php
         echo '$CFG->wwwroot   = "http://{$host}";' >> $GITHUB_WORKSPACE/moodle/config.php
         echo "\$CFG->dataroot  = '$GITHUB_WORKSPACE/moodledata';" >> $GITHUB_WORKSPACE/moodle/config.php

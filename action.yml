@@ -74,12 +74,19 @@ runs:
         password: test
         database: test
 
+    - name: Download MSSQL ODBC driver
+      if: ${{ inputs.dbtype == 'sqlsrv' }}
+      shell: bash
+      run: |
+        apt install -y unixodbc-dev
+
     - name: Setting up PHP ${{ matrix.php }}
       uses: shivammathur/setup-php@v2
       with:
         php-version: ${{ inputs.php }}
         coverage: none
         ini-values: 'max_input_vars=5000'
+        extensions: sqlsrv, pdo_sqlsrv
 
     - name: Checking out code from moodle/moodle
       uses: actions/checkout@v4

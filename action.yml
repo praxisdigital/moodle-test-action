@@ -93,6 +93,7 @@ runs:
       env:
         dbtype: ${{ inputs.dbtype }}
       run: |
+        echo "pathtophp=$(which php)" >> $GITHUB_ENV # Inject installed pathtophp to env. The template config needs it.
         touch $GITHUB_WORKSPACE/moodle/config.php
         mkdir -p $GITHUB_WORKSPACE/moodledata
         echo '<?php' >> $GITHUB_WORKSPACE/moodle/config.php
@@ -120,7 +121,7 @@ runs:
         echo '$CFG->allowthemechangeonurl = 1;' >> $GITHUB_WORKSPACE/moodle/config.php
         echo '$CFG->passwordpolicy = 0;' >> $GITHUB_WORKSPACE/moodle/config.php
         echo '$CFG->cronclionly = 0;' >> $GITHUB_WORKSPACE/moodle/config.php
-        echo '$CFG->pathtophp = moodle_env::get_env("pathtophp");' >> $GITHUB_WORKSPACE/moodle/config.php
+        echo '$CFG->pathtophp = get_env("pathtophp");' >> $GITHUB_WORKSPACE/moodle/config.php
         echo '$CFG->phpunit_dataroot  = realpath(dirname(__DIR__)) . "/phpunitdata";' >> $GITHUB_WORKSPACE/moodle/config.php
         echo '$CFG->phpunit_prefix = "t_";' >> $GITHUB_WORKSPACE/moodle/config.php
         echo 'define("TEST_EXTERNAL_FILES_HTTP_URL", "http://$host:8080");' >> $GITHUB_WORKSPACE/moodle/config.php

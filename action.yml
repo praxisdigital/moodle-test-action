@@ -102,7 +102,6 @@ runs:
         echo '        return empty($value) ? $default : $value;' >> $GITHUB_WORKSPACE/moodle/config.php
         echo '    }' >> $GITHUB_WORKSPACE/moodle/config.php
         echo '}' >> $GITHUB_WORKSPACE/moodle/config.php
-        echo "echo $dbtype; die();" >> $GITHUB_WORKSPACE/moodle/config.php
         echo 'unset($CFG);' >> $GITHUB_WORKSPACE/moodle/config.php
         echo 'global $CFG;' >> $GITHUB_WORKSPACE/moodle/config.php
         echo '$CFG = new stdClass();' >> $GITHUB_WORKSPACE/moodle/config.php

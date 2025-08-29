@@ -138,7 +138,12 @@ runs:
         echo '$CFG->dbuser    = "test";' >> $GITHUB_WORKSPACE/moodle/config.php
         echo '$CFG->dbpass    = "test";' >> $GITHUB_WORKSPACE/moodle/config.php
         echo '$CFG->prefix    = "m_";' >> $GITHUB_WORKSPACE/moodle/config.php
-        echo '$CFG->dboptions = ["dbcollation" => "utf8mb4_unicode_ci", "trustservercertificate" => true];' >> $GITHUB_WORKSPACE/moodle/config.php
+        echo '$CFG->dboptions = [' >> $GITHUB_WORKSPACE/moodle/config.php
+        echo '    "dbcollation" => "utf8mb4_unicode_ci",' >> $GITHUB_WORKSPACE/moodle/config.php
+        echo '    "extrainfo" => [' >> $GITHUB_WORKSPACE/moodle/config.php
+        echo '        "trustservercertificate" => true' >> $GITHUB_WORKSPACE/moodle/config.php
+        echo '    ]' >> $GITHUB_WORKSPACE/moodle/config.php
+        echo '];' >> $GITHUB_WORKSPACE/moodle/config.php
         echo '$host = "localhost";' >> $GITHUB_WORKSPACE/moodle/config.php
         echo '$CFG->wwwroot   = "http://{$host}";' >> $GITHUB_WORKSPACE/moodle/config.php
         echo "\$CFG->dataroot  = '$GITHUB_WORKSPACE/moodledata';" >> $GITHUB_WORKSPACE/moodle/config.php

@@ -26,8 +26,8 @@ inputs:
       Plugin dependencies.
       Format: user/repo:path@ref
       Example: |
-        praxisdigital/assignsubmission_pxaiwriter:mod/assign/submission/pxaiwriter@master
-        praxisdigital/mod_smartlink:mod/smartlink@MOODLE_42_STABLE
+        praxisdigital/assignsubmission_pxaiwriter@master
+        praxisdigital/mod_smartlink@MOODLE_42_STABLE
     required: false
     default: ''
   dbtype:

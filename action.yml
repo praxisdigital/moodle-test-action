@@ -96,12 +96,6 @@ runs:
         touch $GITHUB_WORKSPACE/moodle/config.php
         mkdir -p $GITHUB_WORKSPACE/moodledata
         echo '<?php' >> $GITHUB_WORKSPACE/moodle/config.php
-        echo 'class moodle_env {' >> $GITHUB_WORKSPACE/moodle/config.php
-        echo '    public static function get_env(string $key, string $default = ""): string {' >> $GITHUB_WORKSPACE/moodle/config.php
-        echo '        $value = getenv($key);' >> $GITHUB_WORKSPACE/moodle/config.php
-        echo '        return empty($value) ? $default : $value;' >> $GITHUB_WORKSPACE/moodle/config.php
-        echo '    }' >> $GITHUB_WORKSPACE/moodle/config.php
-        echo '}' >> $GITHUB_WORKSPACE/moodle/config.php
         echo 'unset($CFG);' >> $GITHUB_WORKSPACE/moodle/config.php
         echo 'global $CFG;' >> $GITHUB_WORKSPACE/moodle/config.php
         echo '$CFG = new stdClass();' >> $GITHUB_WORKSPACE/moodle/config.php

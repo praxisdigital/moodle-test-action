@@ -105,7 +105,7 @@ runs:
         echo 'unset($CFG);' >> $GITHUB_WORKSPACE/moodle/config.php
         echo 'global $CFG;' >> $GITHUB_WORKSPACE/moodle/config.php
         echo '$CFG = new stdClass();' >> $GITHUB_WORKSPACE/moodle/config.php
-        echo '$CFG->dbtype    = moodle_env::get_env("dbtype", "mysqli");' >> $GITHUB_WORKSPACE/moodle/config.php
+        echo '$CFG->dbtype    = moodle_env::get_env("dbtype", "mysqli"); echo $CFG->dbtype;' >> $GITHUB_WORKSPACE/moodle/config.php
         echo '$CFG->dblibrary = "native";' >> $GITHUB_WORKSPACE/moodle/config.php
         echo '$CFG->dbhost    = "127.0.0.1";' >> $GITHUB_WORKSPACE/moodle/config.php
         echo '$CFG->dbname    = moodle_env::get_env("dbname", "test");' >> $GITHUB_WORKSPACE/moodle/config.php

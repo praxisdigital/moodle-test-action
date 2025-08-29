@@ -94,7 +94,6 @@ runs:
         sudo sh -c "printf \"; priority=30\nextension=pdo_sqlsrv.so\n\" > /etc/php/$PHP_VERSION/mods-available/pdo_sqlsrv.ini"
         php -m | grep -q 'sqlsrv' && echo "sqlsrv extension installed"
         php -m | grep -q 'pdo_sqlsrv' && echo "pdo_sqlsrv extension installed"
-        php -v
 
     - name: Checking out code from moodle/moodle
       uses: actions/checkout@v4

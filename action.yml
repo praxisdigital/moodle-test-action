@@ -139,7 +139,7 @@ runs:
         echo '$CFG->dbpass    = "test";' >> $GITHUB_WORKSPACE/moodle/config.php
         echo '$CFG->prefix    = "m_";' >> $GITHUB_WORKSPACE/moodle/config.php
         echo '$CFG->dboptions = [' >> $GITHUB_WORKSPACE/moodle/config.php
-        echo '    "dbcollation" => "utf8mb4_unicode_ci",' >> $GITHUB_WORKSPACE/moodle/config.php
+        test "$dbtype" = "mysqli" && echo '    "dbcollation" => "utf8mb4_unicode_ci",' >> $GITHUB_WORKSPACE/moodle/config.php
         echo '    "extrainfo" => [' >> $GITHUB_WORKSPACE/moodle/config.php
         echo '        "TrustServerCertificate" => true' >> $GITHUB_WORKSPACE/moodle/config.php
         echo '    ]' >> $GITHUB_WORKSPACE/moodle/config.php

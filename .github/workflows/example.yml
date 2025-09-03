@@ -97,7 +97,7 @@ jobs:
           - php: 8.4
             os: ubuntu-latest
             moodle: MOODLE_500_STABLE
-            dbtype: mysqli
+            dbtype: sqlsrv
             experimental: true
             dependencies: |
               praxisdigital/local_pxsdk@master

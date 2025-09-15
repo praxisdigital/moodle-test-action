@@ -17,6 +17,10 @@ inputs:
   os:
     description: 'Operating system'
     required: true
+  additional_phpunit_arguments:
+    description: 'Additonal arguments to pass to phpunit'
+    required: false
+    default: ''
   org:
     description: 'Organization'
     required: false
@@ -226,4 +230,5 @@ runs:
       shell: bash
       env:
         component: ${{ inputs.plugin }}
-      run: $GITHUB_WORKSPACE/moodle/vendor/bin/phpunit -c $GITHUB_WORKSPACE/moodle/phpunit.xml --testsuite=${component}_testsuite --testdox --colors
+        ADDITIONAL_STUFF: ${{ inputs.additional_phpunit_arguments }}
+      run: $GITHUB_WORKSPACE/moodle/vendor/bin/phpunit -c $GITHUB_WORKSPACE/moodle/phpunit.xml --testsuite=${component}_testsuite --testdox --colors $ADDITIONAL_STUFF

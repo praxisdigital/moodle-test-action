@@ -117,7 +117,7 @@ runs:
         php -m | grep -q 'pdo_sqlsrv' && echo "pdo_sqlsrv extension installed"
 
     - name: Checking out code from moodle/moodle
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
       with:
         repository: moodle/moodle
         ref: ${{ inputs.moodle }}
@@ -213,7 +213,7 @@ runs:
         done
 
     - name: Check out code from ${{ github.repository }}
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
       with:
         path: ${{ github.workspace }}/moodle/${{ inputs.plugin-path }}
         ref: ${{ github.ref }}

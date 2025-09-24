@@ -1,0 +1,40 @@
+name: Integration & Unit test
+
+on:
+  pull_request:
+    branches:
+      - MOODLE_*_STABLE
+
+jobs:
+  PHPUnit:
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.experimental }}
+    env:
+      DEPENDENCIES: |
+        praxisdigital/local_pxsdk@master
+        praxisdigital/local_pxllogger@MOODLE_42_STABLE
+        praxisdigital/local__praxislib@MOODLE_42_STABLE
+        praxisdigital/local__wspraxis@MOODLE_42_STABLE
+        praxisdigital/enrol__praxisintegration@MOODLE_42_STABLE
+
+    strategy:
+      matrix:
+        php: [8.1, 8.3]
+        os: [ubuntu-latest]
+        dbtype: [mysqli]
+        moodle: [MOODLE_404_STABLE, MOODLE_405_STABLE]
+        experimental: [false]
+
+    steps:
+      - name: Unit testing & integration testing
+        uses: praxisdigital/moodle-test-action@master
+        with:
+          plugin: local_cronpraxis
+          plugin-path: local/cronpraxis
+          os: ${{ matrix.os }}
+          php: ${{ matrix.php }}
+          dbtype: ${{ matrix.dbtype }}
+          moodle: ${{ matrix.moodle }}
+          experimental: ${{ matrix.experimental }}
+          dependencies: ${{ env.DEPENDENCIES }}
+          PRIVATE_REPO_TOKEN: ${{ secrets.MOODLE_GH_KEY }}

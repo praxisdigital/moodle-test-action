@@ -224,7 +224,7 @@ runs:
         echo "pathtophp=$(which php)" >> $GITHUB_ENV # Inject installed pathtophp to env. The template config needs it.
         mkdir $GITHUB_WORKSPACE/../moodledata
         sudo locale-gen en_AU.UTF-8
-        php $GITHUB_WORKSPACE/moodle/admin/tool/phpunit/cli/init.php --no-composer-self-update
+        test -f $GITHUB_WORKSPACE/moodle/public/admin/tool/phpunit/cli/init.php && php $GITHUB_WORKSPACE/moodle/public/admin/tool/phpunit/cli/init.php --no-composer-self-update || php $GITHUB_WORKSPACE/moodle/admin/tool/phpunit/cli/init.php --no-composer-self-update
 
     - name: Running PHPUnit tests
       shell: bash

@@ -38,3 +38,4 @@ jobs:
           experimental: ${{ matrix.experimental }}
           dependencies: ${{ env.DEPENDENCIES }}
           PRIVATE_REPO_TOKEN: ${{ secrets.MOODLE_GH_KEY }}
+          additional_phpunit_arguments: 'something'

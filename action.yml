@@ -232,4 +232,4 @@ runs:
         component: ${{ inputs.plugin }}
         ADDITIONAL_STUFF: ${{ inputs.additional_phpunit_arguments }}
         PLUGIN_PATH: ${{ inputs.plugin-path }}
-      run: test -f $GITHUB_WORKSPACE/$PLUGIN_PATH/phpunit.xml && $GITHUB_WORKSPACE/moodle/vendor/bin/phpunit -c $GITHUB_WORKSPACE/$PLUGIN_PATH/phpunit.xml --testdox --colors $ADDITIONAL_STUFF || $GITHUB_WORKSPACE/moodle/vendor/bin/phpunit -c $GITHUB_WORKSPACE/moodle/phpunit.xml --testsuite=${component}_testsuite --testdox --colors $ADDITIONAL_STUFF
+      run: test -f $GITHUB_WORKSPACE/moodle/$PLUGIN_PATH/phpunit.xml && $GITHUB_WORKSPACE/moodle/vendor/bin/phpunit -c $GITHUB_WORKSPACE/moodle/$PLUGIN_PATH/phpunit.xml --testdox --colors $ADDITIONAL_STUFF || $GITHUB_WORKSPACE/moodle/vendor/bin/phpunit -c $GITHUB_WORKSPACE/moodle/phpunit.xml --testsuite=${component}_testsuite --testdox --colors $ADDITIONAL_STUFF

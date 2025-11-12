@@ -126,6 +126,7 @@ runs:
         repository: ${{ inputs.moodle_repository }}
         ref: ${{ inputs.moodle }}
         path: ${{ github.workspace }}/moodle
+        token: ${{ inputs.PRIVATE_REPO_TOKEN }}
 
     - name: Setting up Moodle dataroot & config
       shell: bash

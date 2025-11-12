@@ -14,6 +14,10 @@ inputs:
   moodle:
     description: 'Moodle version (branch, tag or commit)'
     required: true
+  moodle_repository:
+    description: 'Moodle repository, e.g. moodle/moodle'
+    required: false
+    default: 'moodle/moodle'
   os:
     description: 'Operating system'
     required: true
@@ -116,10 +120,10 @@ runs:
         php -m | grep -q 'sqlsrv' && echo "sqlsrv extension installed"
         php -m | grep -q 'pdo_sqlsrv' && echo "pdo_sqlsrv extension installed"
 
-    - name: Checking out code from moodle/moodle
+    - name: Checking out code from ${{ inputs.moodle_repository }}
       uses: actions/checkout@v5
       with:
-        repository: moodle/moodle
+        repository: ${{ inputs.moodle_repository }}
         ref: ${{ inputs.moodle }}
         path: ${{ github.workspace }}/moodle
 

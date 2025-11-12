@@ -35,6 +35,7 @@ jobs:
           php: ${{ matrix.php }}
           dbtype: ${{ matrix.dbtype }}
           moodle: ${{ matrix.moodle }}
+          moodle_repository: 'moodle/moodle'
           experimental: ${{ matrix.experimental }}
           dependencies: ${{ env.DEPENDENCIES }}
           PRIVATE_REPO_TOKEN: ${{ secrets.MOODLE_GH_KEY }}

@@ -136,6 +136,7 @@ runs:
         echo "pathtophp=$(which php)" >> $GITHUB_ENV # Inject installed pathtophp to env. The template config needs it.
         touch $GITHUB_WORKSPACE/moodle/config.php
         mkdir -p $GITHUB_WORKSPACE/moodledata
+        mkdir -p $GITHUB_WORKSPACE/moodledata/localcachedir
         echo '<?php' >> $GITHUB_WORKSPACE/moodle/config.php
         echo 'unset($CFG);' >> $GITHUB_WORKSPACE/moodle/config.php
         echo 'global $CFG;' >> $GITHUB_WORKSPACE/moodle/config.php
@@ -156,6 +157,7 @@ runs:
         echo '$host = "localhost";' >> $GITHUB_WORKSPACE/moodle/config.php
         echo '$CFG->wwwroot   = "http://{$host}";' >> $GITHUB_WORKSPACE/moodle/config.php
         echo "\$CFG->dataroot  = '$GITHUB_WORKSPACE/moodledata';" >> $GITHUB_WORKSPACE/moodle/config.php
+        echo "\$CFG->localcachedir  = '$GITHUB_WORKSPACE/moodledata/localcachedir';" >> $GITHUB_WORKSPACE/moodle/config.php
         echo '$CFG->admin     = "admin";' >> $GITHUB_WORKSPACE/moodle/config.php
         echo '$CFG->directorypermissions = 0777;' >> $GITHUB_WORKSPACE/moodle/config.php
         echo '$CFG->debug = (E_ALL);' >> $GITHUB_WORKSPACE/moodle/config.php

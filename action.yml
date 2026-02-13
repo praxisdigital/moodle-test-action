@@ -55,7 +55,7 @@ runs:
   steps:
     - name: Setting up DB mysql
       if: ${{ inputs.dbtype == 'mysqli' }}
-      uses: johanmeiring/mysql-action@tmpfs-patch
+      uses: praxisdigital/mysql-action@tmpfs-and-docker-patch
       with:
         collation server: utf8mb4_danish_ci
         mysql version: 8

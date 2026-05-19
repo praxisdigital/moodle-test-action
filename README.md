@@ -19,11 +19,15 @@
     plugin-path: 'local/pxsdk'
 
     # The version of PHP
-    php: '8.3'
+    php: '8.4'
 
     # The reference of Moodle repository.
-    # Such as MOODLE_500_STABLE or v5.0.2
-    moodle: 'MOODLE_500_STABLE'
+    # Such as MOODLE_502_STABLE or v5.2.0
+    moodle: 'MOODLE_502_STABLE'
+
+    # The Moodle source repository to check out.
+    # Override this to use a fork or mirror of moodle/moodle.
+    moodle_repository: 'moodle/moodle'
 
     # Which OS that GitHub Actions will be use
     # The list of OS is available in https://github.com/actions/runner-images?tab=readme-ov-file#available-images
@@ -36,20 +40,29 @@
     # This is being use by the git operation, when the actions try to pull the private repository
     org: 'praxisdigital'
 
-    # The dependencies that the plugin is required to be installed
+    # The dependencies that the plugin is required to be installed.
+    # Format: org/repo@ref (the org/ prefix is required so the checkout step can resolve the clone URL).
     dependencies: |
-        local_pxsdk@master
+        praxisdigital/local_pxsdk@master
 
     # The type of the database that being use for testing
     # We currently support the list below:
     # * mysqli
+    # * pgsql
     # * sqlsrv
     dbtype: 'mysqli'
 
-    # If set to true the error will be ignore.
+    # Marks the run as experimental. This action does not consume the value itself;
+    # it is exposed so caller workflows can read it, e.g.:
+    #   continue-on-error: ${{ matrix.experimental }}
     experimental: false
 
     # The token for private repositories
     PRIVATE_REPO_TOKEN: ''
+
+    # Fail the job if PHPUnit executes zero tests.
+    # Guards against silent green builds (e.g. when the plugin ends up in a path
+    # Moodle does not scan, such as the Moodle 5.0+ public/ layout move).
+    fail_on_empty_test_suite: true
 ```
 <!-- end usage -->

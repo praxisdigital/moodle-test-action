@@ -32,7 +32,7 @@ inputs:
   dependencies:
     description: >
       Plugin dependencies.
-      Format: user/repo:path@ref
+      Format: org/repo@ref
       Example: |
         praxisdigital/assignsubmission_pxaiwriter@master
         praxisdigital/mod_smartlink@MOODLE_42_STABLE
@@ -49,6 +49,10 @@ inputs:
   PRIVATE_REPO_TOKEN:
     description: 'Token for private repositories'
     required: true
+  fail_on_empty_test_suite:
+    description: 'Fail the job if PHPUnit executes no tests'
+    required: false
+    default: 'true'
 
 runs:
   using: 'composite'
@@ -219,10 +223,21 @@ runs:
           git -C $path checkout $ref
         done
 
+    - name: Resolving plugin path for Moodle layout
+      shell: bash
+      run: |
+        # Moodle 5.0+ moved the codebase under public/. Mirror that here so the
+        # plugin under test ends up where core\component will actually find it.
+        if [ -d "$GITHUB_WORKSPACE/moodle/public" ]; then
+          echo "resolved_plugin_path=public/${{ inputs.plugin-path }}" >> $GITHUB_ENV
+        else
+          echo "resolved_plugin_path=${{ inputs.plugin-path }}" >> $GITHUB_ENV
+        fi
+
     - name: Check out code from ${{ github.repository }}
       uses: actions/checkout@v5
       with:
-        path: ${{ github.workspace }}/moodle/${{ inputs.plugin-path }}
+        path: ${{ github.workspace }}/moodle/${{ env.resolved_plugin_path }}
         ref: ${{ github.ref }}
 
     - name: Setting up PHPUnit
@@ -238,5 +253,17 @@ runs:
       env:
         component: ${{ inputs.plugin }}
         ADDITIONAL_STUFF: ${{ inputs.additional_phpunit_arguments }}
-        PLUGIN_PATH: ${{ inputs.plugin-path }}
-      run: test -f $GITHUB_WORKSPACE/moodle/$PLUGIN_PATH/phpunit.xml && $GITHUB_WORKSPACE/moodle/vendor/bin/phpunit -c $GITHUB_WORKSPACE/moodle/$PLUGIN_PATH/phpunit.xml --testdox --colors $ADDITIONAL_STUFF || $GITHUB_WORKSPACE/moodle/vendor/bin/phpunit -c $GITHUB_WORKSPACE/moodle/phpunit.xml --testsuite=${component}_testsuite --testdox --colors $ADDITIONAL_STUFF
+        PLUGIN_PATH: ${{ env.resolved_plugin_path }}
+        FAIL_ON_EMPTY: ${{ inputs.fail_on_empty_test_suite }}
+      run: |
+        PHPUNIT="$GITHUB_WORKSPACE/moodle/vendor/bin/phpunit"
+        PLUGIN_FULL="$GITHUB_WORKSPACE/moodle/$PLUGIN_PATH"
+        EXTRA=""
+        if [ "$FAIL_ON_EMPTY" = "true" ]; then
+          EXTRA="--fail-on-empty-test-suite"
+        fi
+        if [ -f "$PLUGIN_FULL/phpunit.xml" ]; then
+          "$PHPUNIT" -c "$PLUGIN_FULL/phpunit.xml" --testdox --colors $EXTRA $ADDITIONAL_STUFF
+        else
+          "$PHPUNIT" -c "$GITHUB_WORKSPACE/moodle/phpunit.xml" --testsuite="${component}_testsuite" --testdox --colors $EXTRA $ADDITIONAL_STUFF
+        fi

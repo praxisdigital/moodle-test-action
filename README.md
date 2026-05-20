@@ -13,6 +13,7 @@
 - uses: praxisdigital/moodle-test-action@master
   with:
     # The name of the plugin
+    # Leave it empty to auto-detect from version.php. This is useful when the plugin is in a non-standard component.
     plugin: 'local_pxsdk'
 
     # The path of where plugin should be install

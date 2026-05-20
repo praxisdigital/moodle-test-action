@@ -3,8 +3,9 @@ description: 'Run PHPUnit tests for Moodle'
 
 inputs:
   plugin:
-    description: 'Plugin name (component name)'
-    required: true
+    description: 'Plugin name (component name). Optional override; if empty, it will be auto-detected from version.php.'
+    required: false
+    default: ''
   plugin-path:
     description: 'Plugin path'
     required: true
@@ -125,7 +126,7 @@ runs:
         php -m | grep -q 'pdo_sqlsrv' && echo "pdo_sqlsrv extension installed"
 
     - name: Checking out code from ${{ inputs.moodle_repository }}
-      uses: actions/checkout@v5
+      uses: actions/checkout@v6
       with:
         repository: ${{ inputs.moodle_repository }}
         ref: ${{ inputs.moodle }}
@@ -235,10 +236,35 @@ runs:
         fi
 
     - name: Check out code from ${{ github.repository }}
-      uses: actions/checkout@v5
+      uses: actions/checkout@v6
       with:
         path: ${{ github.workspace }}/moodle/${{ env.resolved_plugin_path }}
         ref: ${{ github.ref }}
+
+    - name: Resolving plugin component from version.php
+      shell: bash
+      env:
+        plugin_override: ${{ inputs.plugin }}
+      run: |
+        VERSION_FILE="$GITHUB_WORKSPACE/moodle/${{ env.resolved_plugin_path }}/version.php"
+        if [ ! -f "$VERSION_FILE" ]; then
+          echo "version.php not found at $VERSION_FILE"
+          exit 1
+        fi
+        component=$(sed -En 's/\s*\$plugin->component\s*=\s*(.*)\s*;/\1/p' "$VERSION_FILE" | cut -d"'" -f2 | cut -d'"' -f2)
+        if [ -z "$component" ]; then
+          echo "Failed to determine component name from $VERSION_FILE"
+          exit 1
+        fi
+        echo "Auto-detected component from version.php: $component"
+
+        if [ -n "$plugin_override" ]; then
+          echo "Overriding auto-detected component with inputs.plugin: $plugin_override"
+          component="$plugin_override"
+        fi
+
+        echo "Final component: $component"
+        echo "component=$component" >> $GITHUB_ENV
 
     - name: Setting up PHPUnit
       shell: bash
@@ -251,7 +277,7 @@ runs:
     - name: Running PHPUnit tests
       shell: bash
       env:
-        component: ${{ inputs.plugin }}
+        component: ${{ env.component }}
         ADDITIONAL_STUFF: ${{ inputs.additional_phpunit_arguments }}
         PLUGIN_PATH: ${{ env.resolved_plugin_path }}
         FAIL_ON_EMPTY: ${{ inputs.fail_on_empty_test_suite }}
@@ -263,7 +289,9 @@ runs:
           EXTRA="--fail-on-empty-test-suite"
         fi
         if [ -f "$PLUGIN_FULL/phpunit.xml" ]; then
+          echo "Running phpunit on ${component} with plugin phpunit.xml"
           "$PHPUNIT" -c "$PLUGIN_FULL/phpunit.xml" --testdox --colors $EXTRA $ADDITIONAL_STUFF
         else
-          "$PHPUNIT" -c "$GITHUB_WORKSPACE/moodle/phpunit.xml" --testsuite="${component}_testsuite" --testdox --colors $EXTRA $ADDITIONAL_STUFF
+          echo "Running phpunit on ${component} with testsuite from Moodle phpunit.xml"
+          "$PHPUNIT" -c "$GITHUB_WORKSPACE/moodle/phpunit.xml" --testsuite "${component}_testsuite" --testdox --colors $EXTRA $ADDITIONAL_STUFF
         fi

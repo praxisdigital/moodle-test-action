@@ -11,108 +11,26 @@ jobs:
     continue-on-error: ${{ matrix.experimental }}
     strategy:
       matrix:
-        include:
-          # Moodle 4.4
-          - php: 8.1
-            os: ubuntu-latest
-            moodle: MOODLE_404_STABLE
-            experimental: false
-            dbtype: mysqli
-            dependencies: |
-              praxisdigital/local_pxsdk@master
-          - php: 8.2
-            os: ubuntu-latest
-            moodle: MOODLE_404_STABLE
-            dbtype: mysqli
-            experimental: false
-            dependencies: |
-              praxisdigital/local_pxsdk@master
-          - php: 8.3
-            os: ubuntu-latest
-            moodle: MOODLE_404_STABLE
-            dbtype: mysqli
-            experimental: false
-            dependencies: |
-              praxisdigital/local_pxsdk@master
-          # MSSQL
-          - php: 8.1
-            os: ubuntu-latest
-            moodle: MOODLE_404_STABLE
-            experimental: false
-            dbtype: sqlsrv
-            dependencies: |
-              praxisdigital/local_pxsdk@master
-          - php: 8.2
-            os: ubuntu-latest
-            moodle: MOODLE_404_STABLE
-            dbtype: sqlsrv
-            experimental: false
-            dependencies: |
-              praxisdigital/local_pxsdk@master
-          - php: 8.3
-            os: ubuntu-latest
-            moodle: MOODLE_404_STABLE
-            dbtype: sqlsrv
-            experimental: false
-            dependencies: |
-              praxisdigital/local_pxsdk@master
-
-          # Moodle 5.0
-          - php: 8.2
-            os: ubuntu-latest
-            moodle: MOODLE_500_STABLE
-            dbtype: mysqli
-            experimental: true
-            dependencies: |
-              praxisdigital/local_pxsdk@master
-          - php: 8.3
-            os: ubuntu-latest
-            moodle: MOODLE_500_STABLE
-            dbtype: mysqli
-            experimental: true
-            dependencies: |
-              praxisdigital/local_pxsdk@master
-          - php: 8.4
-            os: ubuntu-latest
-            moodle: MOODLE_500_STABLE
-            dbtype: mysqli
-            experimental: true
-            dependencies: |
-              praxisdigital/local_pxsdk@master
-          # MSSQL
-          - php: 8.2
-            os: ubuntu-latest
-            moodle: MOODLE_500_STABLE
-            dbtype: sqlsrv
-            experimental: true
-            dependencies: |
-              praxisdigital/local_pxsdk@master
-          - php: 8.3
-            os: ubuntu-latest
-            moodle: MOODLE_500_STABLE
-            dbtype: sqlsrv
-            experimental: true
-            dependencies: |
-              praxisdigital/local_pxsdk@master
-          - php: 8.4
-            os: ubuntu-latest
-            moodle: MOODLE_500_STABLE
-            dbtype: sqlsrv
-            experimental: true
-            dependencies: |
-              praxisdigital/local_pxsdk@master
-
+        # The variable is available in https://github.com/praxisdigital/local_pxsdk/settings/variables/actions
+        php: ${{ fromJSON(vars.MOODLE_SUPPORTED_PHP_VERSIONS) }}
+        moodle: ${{ fromJSON(vars.MOODLE_SUPPORTED_VERSIONS) }}
+        moodle_repos: ${{ fromJSON(vars.MOODLE_REPOS) }}
+        os: ${{ fromJSON(vars.MOODLE_OS || '["ubuntu-latest"]') }}
+        dbtype: ${{ fromJSON(vars.MOODLE_DB_TYPES || '["mysqli", "sqlsrv"]') }}
+        experimental: ${{ fromJSON(vars.MOODLE_EXPERIMENTAL || '[false]') }}
+        dependencies: ["${{ join(fromJSON(vars.MOODLE_PLUGIN_DEPENDENCIES || '[]'), ' ') }}"]
+        exclude: ${{ fromJSON(vars.MOODLE_EXCLUDE_MATRIX || '[]') }}
     steps:
       - name: Unit testing & integration testing
         uses: praxisdigital/moodle-test-action@master
         with:
-          plugin: format_pxgrid
-          plugin-path: course/format/pxgrid
-          os: ${{ matrix.os }}
+          plugin: local_pxsdk
+          plugin-path: local/pxsdk
+          os: ${{ matrix.os || 'ubuntu-latest' }}
           php: ${{ matrix.php }}
-          dbtype: ${{ matrix.dbtype }}
+          dbtype: ${{ matrix.dbtype || 'mysqli' }}
           moodle: ${{ matrix.moodle }}
-          experimental: ${{ matrix.experimental }}
-          dependencies: ${{ matrix.dependencies }}
+          moodle_repository: ${{ matrix.moodle_repos || 'moodle/moodle' }}
+          experimental: ${{ matrix.experimental || false }}
+          dependencies: ${{ matrix.dependencies || '' }}
           PRIVATE_REPO_TOKEN: ${{ secrets.MOODLE_GH_KEY }}
-          additional_phpunit_arguments: 'something'

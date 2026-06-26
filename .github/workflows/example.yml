@@ -3,7 +3,20 @@ name: Integration & Unit test
 on:
   pull_request:
     branches:
+      - main
+      - master
       - MOODLE_*_STABLE
+  push:
+    branches:
+      - main
+      - master
+      - MOODLE_*_STABLE
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: write
+  issues: write
 
 jobs:
   PHPUnit:

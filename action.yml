@@ -91,7 +91,7 @@ runs:
       uses: shivammathur/setup-php@v2
       with:
         php-version: ${{ inputs.php }}
-        coverage: none
+        coverage: xdebug
         ini-values: 'max_input_vars=5000'
         extensions: sqlsrv, pdo_sqlsrv
 
@@ -281,17 +281,291 @@ runs:
         ADDITIONAL_STUFF: ${{ inputs.additional_phpunit_arguments }}
         PLUGIN_PATH: ${{ env.resolved_plugin_path }}
         FAIL_ON_EMPTY: ${{ inputs.fail_on_empty_test_suite }}
+        XDEBUG_MODE: coverage
       run: |
         PHPUNIT="$GITHUB_WORKSPACE/moodle/vendor/bin/phpunit"
         PLUGIN_FULL="$GITHUB_WORKSPACE/moodle/$PLUGIN_PATH"
+        COVERAGE_DIR="$GITHUB_WORKSPACE/coverage"
         EXTRA=""
         if [ "$FAIL_ON_EMPTY" = "true" ]; then
           EXTRA="--fail-on-empty-test-suite"
         fi
+        mkdir -p "$COVERAGE_DIR"
+        COVERAGE_ARGS="--coverage-clover $COVERAGE_DIR/clover.xml --coverage-text $COVERAGE_DIR/summary.txt"
         if [ -f "$PLUGIN_FULL/phpunit.xml" ]; then
           echo "Running phpunit on ${component} with plugin phpunit.xml"
-          "$PHPUNIT" -c "$PLUGIN_FULL/phpunit.xml" --testdox --colors $EXTRA $ADDITIONAL_STUFF
+          "$PHPUNIT" -c "$PLUGIN_FULL/phpunit.xml" --testdox --colors $EXTRA $COVERAGE_ARGS $ADDITIONAL_STUFF
         else
           echo "Running phpunit on ${component} with testsuite from Moodle phpunit.xml"
-          "$PHPUNIT" -c "$GITHUB_WORKSPACE/moodle/phpunit.xml" --testsuite "${component}_testsuite" --testdox --colors $EXTRA $ADDITIONAL_STUFF
+          "$PHPUNIT" -c "$GITHUB_WORKSPACE/moodle/phpunit.xml" --testsuite "${component}_testsuite" --testdox --colors $EXTRA $COVERAGE_ARGS $ADDITIONAL_STUFF
         fi
+
+    - name: Resolving coverage artifact name
+      if: ${{ always() }}
+      shell: bash
+      env:
+        component: ${{ env.component }}
+        moodle: ${{ inputs.moodle }}
+        php: ${{ inputs.php }}
+        dbtype: ${{ inputs.dbtype }}
+        os: ${{ inputs.os }}
+        moodle_repository: ${{ inputs.moodle_repository }}
+      run: |
+        raw="coverage-${component}-${moodle}-php${php}-${dbtype}-${os}-${moodle_repository}"
+        artifact_name=$(printf '%s' "$raw" | tr '/:@ ' '----' | tr -cd 'A-Za-z0-9_.-')
+        echo "coverage_artifact_name=$artifact_name" >> "$GITHUB_ENV"
+
+    - name: Uploading coverage artifact
+      if: ${{ always() }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ env.coverage_artifact_name }}
+        path: ${{ github.workspace }}/coverage
+        if-no-files-found: warn
+
+    - name: Finding base branch coverage artifact
+      if: ${{ always() && github.event_name == 'pull_request' }}
+      uses: actions/github-script@v7
+      env:
+        ARTIFACT_NAME: ${{ env.coverage_artifact_name }}
+      with:
+        github-token: ${{ github.token }}
+        script: |
+          const fs = require('fs');
+          try {
+            const {owner, repo} = context.repo;
+            const baseBranch = context.payload.pull_request.base.ref;
+            const artifactName = process.env.ARTIFACT_NAME;
+
+            const currentRun = await github.rest.actions.getWorkflowRun({
+              owner,
+              repo,
+              run_id: context.runId,
+            });
+
+            const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
+              owner,
+              repo,
+              workflow_id: currentRun.data.workflow_id,
+              branch: baseBranch,
+              status: 'success',
+              per_page: 20,
+            });
+
+            let match = null;
+            for (const run of runs) {
+              const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {
+                owner,
+                repo,
+                run_id: run.id,
+                per_page: 100,
+              });
+              const artifact = artifacts.find((item) => item.name === artifactName && !item.expired);
+              if (artifact) {
+                match = {run, artifact};
+                break;
+              }
+            }
+
+            if (!match) {
+              fs.appendFileSync(process.env.GITHUB_ENV, 'base_coverage_run_id=\n');
+              fs.appendFileSync(process.env.GITHUB_ENV, 'base_coverage_artifact_found=false\n');
+              core.notice(`No matching coverage artifact named ${artifactName} was found on ${baseBranch}.`);
+              return;
+            }
+
+            fs.appendFileSync(process.env.GITHUB_ENV, `base_coverage_run_id=${match.run.id}\n`);
+            fs.appendFileSync(process.env.GITHUB_ENV, 'base_coverage_artifact_found=true\n');
+            core.notice(`Found ${artifactName} in run ${match.run.id} on ${baseBranch}.`);
+          } catch (error) {
+            fs.appendFileSync(process.env.GITHUB_ENV, 'base_coverage_run_id=\n');
+            fs.appendFileSync(process.env.GITHUB_ENV, 'base_coverage_artifact_found=false\n');
+            core.warning(`Could not find base branch coverage artifact: ${error.message}`);
+          }
+
+    - name: Downloading base branch coverage artifact
+      if: ${{ always() && github.event_name == 'pull_request' && env.base_coverage_artifact_found == 'true' }}
+      continue-on-error: true
+      uses: actions/download-artifact@v4
+      with:
+        name: ${{ env.coverage_artifact_name }}
+        path: ${{ github.workspace }}/base-coverage
+        run-id: ${{ env.base_coverage_run_id }}
+        github-token: ${{ github.token }}
+        repository: ${{ github.repository }}
+
+    - name: Commenting PR coverage diff
+      if: ${{ always() && github.event_name == 'pull_request' }}
+      continue-on-error: true
+      uses: actions/github-script@v7
+      env:
+        ARTIFACT_NAME: ${{ env.coverage_artifact_name }}
+        BASE_ARTIFACT_FOUND: ${{ env.base_coverage_artifact_found }}
+      with:
+        github-token: ${{ github.token }}
+        script: |
+          const fs = require('fs');
+          const path = require('path');
+          const {owner, repo} = context.repo;
+          const issue_number = context.payload.pull_request.number;
+          const marker = `<!-- moodle-test-action-coverage:${process.env.ARTIFACT_NAME} -->`;
+
+          function decodeXml(value) {
+            return value
+              .replace(/&quot;/g, '"')
+              .replace(/&apos;/g, "'")
+              .replace(/&lt;/g, '<')
+              .replace(/&gt;/g, '>')
+              .replace(/&amp;/g, '&');
+          }
+
+          function attrs(tag) {
+            const result = {};
+            for (const match of tag.matchAll(/([A-Za-z_:][A-Za-z0-9_.:-]*)="([^"]*)"/g)) {
+              result[match[1]] = decodeXml(match[2]);
+            }
+            return result;
+          }
+
+          function pct(covered, total) {
+            return total > 0 ? (covered / total) * 100 : 0;
+          }
+
+          function parseClover(file) {
+            const xml = fs.readFileSync(file, 'utf8');
+            const projectMatch = xml.match(/<project\b[^>]*>/);
+            if (!projectMatch) {
+              throw new Error(`Could not find project metrics in ${file}`);
+            }
+            const projectBlock = xml.slice(projectMatch.index, xml.indexOf('</project>', projectMatch.index));
+            const metricsMatches = [...projectBlock.matchAll(/<metrics\b[^>]*>/g)];
+            if (metricsMatches.length === 0) {
+              throw new Error(`Could not find coverage metrics in ${file}`);
+            }
+
+            const projectMetrics = attrs(metricsMatches[metricsMatches.length - 1][0]);
+            const total = Number(projectMetrics.statements || 0);
+            const covered = Number(projectMetrics.coveredstatements || 0);
+            const files = {};
+
+            for (const match of xml.matchAll(/<file\b[^>]*name="[^"]*"[^>]*>[\s\S]*?<\/file>/g)) {
+              const block = match[0];
+              const fileTag = block.match(/<file\b[^>]*>/)[0];
+              const name = attrs(fileTag).name;
+              const metrics = block.match(/<metrics\b[^>]*>/g);
+              if (!name || !metrics || metrics.length === 0) {
+                continue;
+              }
+              const fileMetrics = attrs(metrics[metrics.length - 1]);
+              const fileTotal = Number(fileMetrics.statements || 0);
+              const fileCovered = Number(fileMetrics.coveredstatements || 0);
+              const moodleIndex = name.indexOf('/moodle/');
+              const relativeName = moodleIndex >= 0 ? name.slice(moodleIndex + '/moodle/'.length) : name;
+              files[relativeName] = {
+                total: fileTotal,
+                covered: fileCovered,
+                percent: pct(fileCovered, fileTotal),
+              };
+            }
+
+            return {total, covered, percent: pct(covered, total), files};
+          }
+
+          function fmt(value) {
+            return `${value.toFixed(2)}%`;
+          }
+
+          function delta(value) {
+            const sign = value > 0 ? '+' : '';
+            return `${sign}${value.toFixed(2)}%`;
+          }
+
+          function cell(value) {
+            return value ? fmt(value.percent) : 'n/a';
+          }
+
+          function buildDiff(base, pr) {
+            const rows = [];
+            const names = new Set([...Object.keys(base.files), ...Object.keys(pr.files)]);
+            for (const name of names) {
+              const before = base.files[name];
+              const after = pr.files[name];
+              const change = before && after ? after.percent - before.percent : null;
+              rows.push({name, before, after, change});
+            }
+
+            rows.sort((a, b) => {
+              if (a.change === null && b.change === null) return a.name.localeCompare(b.name);
+              if (a.change === null) return 1;
+              if (b.change === null) return -1;
+              return a.change - b.change;
+            });
+
+            const lines = [
+              marker,
+              '## Code Coverage Diff',
+              '',
+              `Artifact: \`${process.env.ARTIFACT_NAME}\``,
+              '',
+              '| Total | Base | PR | Diff |',
+              '| --- | ---: | ---: | ---: |',
+              `| Statements | ${fmt(base.percent)} (${base.covered}/${base.total}) | ${fmt(pr.percent)} (${pr.covered}/${pr.total}) | ${delta(pr.percent - base.percent)} |`,
+              '',
+              '| File | Base | PR | Diff |',
+              '| --- | ---: | ---: | ---: |',
+            ];
+
+            const shown = rows.slice(0, 50);
+            for (const row of shown) {
+              const diff = row.change === null ? (row.before ? 'removed' : 'added') : delta(row.change);
+              lines.push(`| \`${row.name}\` | ${cell(row.before)} | ${cell(row.after)} | ${diff} |`);
+            }
+
+            if (rows.length > shown.length) {
+              lines.push(`| ... | ... | ... | ${rows.length - shown.length} more files omitted |`);
+            }
+
+            return lines.join('\n');
+          }
+
+          function reason(message) {
+            return [
+              marker,
+              '## Code Coverage Diff',
+              '',
+              `Artifact: \`${process.env.ARTIFACT_NAME}\``,
+              '',
+              message,
+            ].join('\n');
+          }
+
+          const prCoverage = path.join(process.env.GITHUB_WORKSPACE, 'coverage', 'clover.xml');
+          const baseCoverage = path.join(process.env.GITHUB_WORKSPACE, 'base-coverage', 'clover.xml');
+          let body;
+
+          try {
+            if (!fs.existsSync(prCoverage)) {
+              body = reason('No coverage diff is available because this PR run did not generate a `clover.xml` coverage report.');
+            } else if (process.env.BASE_ARTIFACT_FOUND !== 'true') {
+              body = reason('No coverage diff is available because no matching base-branch coverage artifact was found, or the workflow token could not read artifacts. Run this workflow on the base branch first and ensure the workflow has `actions: read`, then rerun the PR workflow.');
+            } else if (!fs.existsSync(baseCoverage)) {
+              body = reason('No coverage diff is available because the matching base-branch artifact could not be downloaded or did not contain `clover.xml`.');
+            } else {
+              body = buildDiff(parseClover(baseCoverage), parseClover(prCoverage));
+            }
+          } catch (error) {
+            body = reason(`No coverage diff is available because coverage parsing failed: ${error.message}`);
+          }
+
+          const comments = await github.paginate(github.rest.issues.listComments, {
+            owner,
+            repo,
+            issue_number,
+            per_page: 100,
+          });
+          const existing = comments.find((comment) => comment.user.type === 'Bot' && comment.body.includes(marker));
+          if (existing) {
+            await github.rest.issues.updateComment({owner, repo, comment_id: existing.id, body});
+          } else {
+            await github.rest.issues.createComment({owner, repo, issue_number, body});
+          }

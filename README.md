@@ -8,6 +8,36 @@
 
 # Usage
 
+Coverage is always generated. The action uploads a Clover/text coverage report as
+a workflow artifact for every run. On pull requests, it attempts to download the
+matching artifact from the latest successful run of the same workflow on the PR
+base branch, compares total and file-by-file statement coverage, and updates a PR
+comment with the diff. If a matching base artifact does not exist yet, the PR
+comment explains why no diff was available.
+
+For coverage diffs to work, run the caller workflow on both pull requests and
+pushes to the branches used as PR bases:
+
+```yaml
+on:
+  pull_request:
+    branches:
+      - main
+      - master
+      - MOODLE_*_STABLE
+  push:
+    branches:
+      - main
+      - master
+      - MOODLE_*_STABLE
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: write
+  issues: write
+```
+
 <!-- start usage -->
 ```yaml
 - uses: praxisdigital/moodle-test-action@master

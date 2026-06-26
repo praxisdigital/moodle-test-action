@@ -291,7 +291,7 @@ runs:
           EXTRA="--fail-on-empty-test-suite"
         fi
         mkdir -p "$COVERAGE_DIR"
-        COVERAGE_ARGS="--coverage-clover $COVERAGE_DIR/clover.xml --coverage-text $COVERAGE_DIR/summary.txt"
+        COVERAGE_ARGS="--coverage-clover=$COVERAGE_DIR/clover.xml --coverage-text=$COVERAGE_DIR/summary.txt"
         if [ -f "$PLUGIN_FULL/phpunit.xml" ]; then
           echo "Running phpunit on ${component} with plugin phpunit.xml"
           "$PHPUNIT" -c "$PLUGIN_FULL/phpunit.xml" --testdox --colors $EXTRA $COVERAGE_ARGS $ADDITIONAL_STUFF

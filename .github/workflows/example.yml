@@ -47,3 +47,11 @@ jobs:
           experimental: ${{ matrix.experimental || false }}
           dependencies: ${{ matrix.dependencies || '' }}
           PRIVATE_REPO_TOKEN: ${{ secrets.MOODLE_GH_KEY }}
+
+  Coverage:
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    needs: PHPUnit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Combined code coverage diff
+        uses: praxisdigital/moodle-test-action/coverage-summary@master

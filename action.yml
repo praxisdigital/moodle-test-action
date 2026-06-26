@@ -408,7 +408,22 @@ runs:
           const path = require('path');
           const {owner, repo} = context.repo;
           const issue_number = context.payload.pull_request.number;
-          const marker = `<!-- moodle-test-action-coverage:${process.env.ARTIFACT_NAME} -->`;
+          const marker = '<!-- moodle-test-action-coverage -->';
+          const sectionStart = `<!-- coverage-section:start:${process.env.ARTIFACT_NAME} -->`;
+          const sectionEnd = `<!-- coverage-section:end:${process.env.ARTIFACT_NAME} -->`;
+
+          function section(content) {
+            return [
+              sectionStart,
+              '<details open>',
+              `<summary><strong>${process.env.ARTIFACT_NAME}</strong></summary>`,
+              '',
+              content,
+              '',
+              '</details>',
+              sectionEnd,
+            ].join('\n');
+          }
 
           function decodeXml(value) {
             return value
@@ -502,9 +517,6 @@ runs:
             });
 
             const lines = [
-              marker,
-              '## Code Coverage Diff',
-              '',
               `Artifact: \`${process.env.ARTIFACT_NAME}\``,
               '',
               '| Total | Base | PR | Diff |',
@@ -530,9 +542,6 @@ runs:
 
           function reason(message) {
             return [
-              marker,
-              '## Code Coverage Diff',
-              '',
               `Artifact: \`${process.env.ARTIFACT_NAME}\``,
               '',
               message,
@@ -557,6 +566,7 @@ runs:
             body = reason(`No coverage diff is available because coverage parsing failed: ${error.message}`);
           }
 
+          const sectionBody = section(body);
           const comments = await github.paginate(github.rest.issues.listComments, {
             owner,
             repo,
@@ -564,8 +574,21 @@ runs:
             per_page: 100,
           });
           const existing = comments.find((comment) => comment.user.type === 'Bot' && comment.body.includes(marker));
+          const title = [
+            marker,
+            '## Code Coverage Diff',
+            '',
+            'This comment is updated by matrix jobs as they finish. Each section represents one coverage artifact.',
+            '',
+          ].join('\n');
           if (existing) {
-            await github.rest.issues.updateComment({owner, repo, comment_id: existing.id, body});
+            const escapedStart = sectionStart.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const escapedEnd = sectionEnd.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const pattern = new RegExp(`${escapedStart}[\\s\\S]*?${escapedEnd}`);
+            const nextBody = pattern.test(existing.body)
+              ? existing.body.replace(pattern, sectionBody)
+              : `${existing.body.trim()}\n\n${sectionBody}`;
+            await github.rest.issues.updateComment({owner, repo, comment_id: existing.id, body: nextBody});
           } else {
-            await github.rest.issues.createComment({owner, repo, issue_number, body});
+            await github.rest.issues.createComment({owner, repo, issue_number, body: `${title}${sectionBody}`});
           }

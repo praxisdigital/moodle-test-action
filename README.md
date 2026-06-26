@@ -12,7 +12,8 @@ Coverage is always generated. The action uploads a Clover/text coverage report a
 a workflow artifact for every run. On pull requests, it attempts to download the
 matching artifact from the latest successful run of the same workflow on the PR
 base branch, compares total and file-by-file statement coverage, and updates a PR
-comment with the diff. If a matching base artifact does not exist yet, the PR
+comment with the diff. Matrix jobs share a single PR comment, with one section
+per coverage artifact. If a matching base artifact does not exist yet, the PR
 comment explains why no diff was available.
 
 For coverage diffs to work, run the caller workflow on both pull requests and

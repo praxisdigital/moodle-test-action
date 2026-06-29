@@ -139,7 +139,8 @@ runs:
 
           function relativeName(name) {
             const moodleIndex = name.indexOf('/moodle/');
-            return moodleIndex >= 0 ? name.slice(moodleIndex + '/moodle/'.length) : name;
+            const relative = moodleIndex >= 0 ? name.slice(moodleIndex + '/moodle/'.length) : name;
+            return relative.startsWith('public/') ? relative.slice('public/'.length) : relative;
           }
 
           function addLine(file, lineNumber, isCovered) {

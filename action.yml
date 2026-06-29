@@ -305,6 +305,7 @@ runs:
       shell: bash
       env:
         component: ${{ env.component }}
+        plugin_path: ${{ inputs.plugin-path }}
         moodle: ${{ inputs.moodle }}
         php: ${{ inputs.php }}
         dbtype: ${{ inputs.dbtype }}
@@ -314,6 +315,12 @@ runs:
         raw="coverage-${component}-${moodle}-php${php}-${dbtype}-${os}-${moodle_repository}"
         artifact_name=$(printf '%s' "$raw" | tr '/:@ ' '----' | tr -cd 'A-Za-z0-9_.-')
         echo "coverage_artifact_name=$artifact_name" >> "$GITHUB_ENV"
+
+        normalized_plugin_path=${plugin_path#/}
+        normalized_plugin_path=${normalized_plugin_path%/}
+        normalized_plugin_path=${normalized_plugin_path#public/}
+        mkdir -p "$GITHUB_WORKSPACE/coverage"
+        printf '{"component":"%s","pluginPath":"%s"}\n' "$component" "$normalized_plugin_path" > "$GITHUB_WORKSPACE/coverage/metadata.json"
 
     - name: Uploading coverage artifact
       if: ${{ always() }}

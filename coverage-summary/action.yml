@@ -6,10 +6,6 @@ inputs:
     description: 'Coverage artifact name prefix to include in the summary'
     required: false
     default: 'coverage-'
-  plugin-path:
-    description: 'Plugin path prefix to strip from coverage file names, e.g. local/mxsdk'
-    required: false
-    default: ''
 
 runs:
   using: 'composite'
@@ -95,7 +91,6 @@ runs:
       env:
         ARTIFACT_PREFIX: ${{ inputs.artifact-prefix }}
         BASE_ARTIFACTS_FOUND: ${{ env.base_coverage_artifacts_found }}
-        PLUGIN_PATH: ${{ inputs.plugin-path }}
       with:
         github-token: ${{ github.token }}
         script: |
@@ -142,16 +137,30 @@ runs:
             return result.sort();
           }
 
-          function relativeName(name) {
+          function readCoverageMetadata(cloverPath) {
+            const metadataPath = path.join(path.dirname(cloverPath), 'metadata.json');
+            if (!fs.existsSync(metadataPath)) {
+              return {};
+            }
+
+            try {
+              return JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
+            } catch (error) {
+              core.warning(`Could not parse coverage metadata at ${metadataPath}: ${error.message}`);
+              return {};
+            }
+          }
+
+          function relativeName(name, pluginPath) {
             const moodleIndex = name.indexOf('/moodle/');
             let relative = moodleIndex >= 0 ? name.slice(moodleIndex + '/moodle/'.length) : name;
             if (relative.startsWith('public/')) {
               relative = relative.slice('public/'.length);
             }
 
-            const pluginPath = (process.env.PLUGIN_PATH || '').replace(/^\/+|\/+$/g, '');
-            if (pluginPath && relative.startsWith(`${pluginPath}/`)) {
-              relative = relative.slice(pluginPath.length + 1);
+            const normalizedPluginPath = (pluginPath || '').replace(/^\/+|\/+$/g, '').replace(/^public\//, '');
+            if (normalizedPluginPath && relative.startsWith(`${normalizedPluginPath}/`)) {
+              relative = relative.slice(normalizedPluginPath.length + 1);
             }
 
             return relative;
@@ -167,11 +176,12 @@ runs:
           function mergeCloverFiles(files) {
             const merged = {files: {}, artifactCount: files.length};
             for (const filePath of files) {
+              const metadata = readCoverageMetadata(filePath);
               const xml = fs.readFileSync(filePath, 'utf8');
               for (const match of xml.matchAll(/<file\b[^>]*name="[^"]*"[^>]*>[\s\S]*?<\/file>/g)) {
                 const block = match[0];
                 const fileTag = block.match(/<file\b[^>]*>/)[0];
-                const name = relativeName(attrs(fileTag).name || '');
+                const name = relativeName(attrs(fileTag).name || '', metadata.pluginPath);
                 if (!name) {
                   continue;
                 }

@@ -6,6 +6,10 @@ inputs:
     description: 'Coverage artifact name prefix to include in the summary'
     required: false
     default: 'coverage-'
+  plugin-path:
+    description: 'Plugin path prefix to strip from coverage file names, e.g. local/mxsdk'
+    required: false
+    default: ''
 
 runs:
   using: 'composite'
@@ -91,6 +95,7 @@ runs:
       env:
         ARTIFACT_PREFIX: ${{ inputs.artifact-prefix }}
         BASE_ARTIFACTS_FOUND: ${{ env.base_coverage_artifacts_found }}
+        PLUGIN_PATH: ${{ inputs.plugin-path }}
       with:
         github-token: ${{ github.token }}
         script: |
@@ -139,8 +144,17 @@ runs:
 
           function relativeName(name) {
             const moodleIndex = name.indexOf('/moodle/');
-            const relative = moodleIndex >= 0 ? name.slice(moodleIndex + '/moodle/'.length) : name;
-            return relative.startsWith('public/') ? relative.slice('public/'.length) : relative;
+            let relative = moodleIndex >= 0 ? name.slice(moodleIndex + '/moodle/'.length) : name;
+            if (relative.startsWith('public/')) {
+              relative = relative.slice('public/'.length);
+            }
+
+            const pluginPath = (process.env.PLUGIN_PATH || '').replace(/^\/+|\/+$/g, '');
+            if (pluginPath && relative.startsWith(`${pluginPath}/`)) {
+              relative = relative.slice(pluginPath.length + 1);
+            }
+
+            return relative;
           }
 
           function addLine(file, lineNumber, isCovered) {

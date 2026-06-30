@@ -1,0 +1,318 @@
+name: moodle-test-action coverage summary
+description: 'Merge Moodle PHPUnit coverage artifacts and comment a combined PR diff'
+
+inputs:
+  artifact-prefix:
+    description: 'Coverage artifact name prefix to include in the summary'
+    required: false
+    default: 'coverage-'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Downloading current run coverage artifacts
+      if: ${{ always() }}
+      continue-on-error: true
+      uses: actions/download-artifact@v4
+      with:
+        pattern: ${{ inputs.artifact-prefix }}*
+        path: ${{ github.workspace }}/coverage-summary/pr
+        merge-multiple: false
+
+    - name: Finding base branch coverage run
+      if: ${{ always() && github.event_name == 'pull_request' }}
+      uses: actions/github-script@v7
+      env:
+        ARTIFACT_PREFIX: ${{ inputs.artifact-prefix }}
+      with:
+        github-token: ${{ github.token }}
+        script: |
+          const fs = require('fs');
+          try {
+            const {owner, repo} = context.repo;
+            const baseBranch = context.payload.pull_request.base.ref;
+            const prefix = process.env.ARTIFACT_PREFIX;
+            const currentRun = await github.rest.actions.getWorkflowRun({
+              owner,
+              repo,
+              run_id: context.runId,
+            });
+
+            const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
+              owner,
+              repo,
+              workflow_id: currentRun.data.workflow_id,
+              branch: baseBranch,
+              status: 'success',
+              per_page: 20,
+            });
+
+            for (const run of runs) {
+              const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {
+                owner,
+                repo,
+                run_id: run.id,
+                per_page: 100,
+              });
+              const matches = artifacts.filter((artifact) => artifact.name.startsWith(prefix) && !artifact.expired);
+              if (matches.length > 0) {
+                fs.appendFileSync(process.env.GITHUB_ENV, `base_coverage_run_id=${run.id}\n`);
+                fs.appendFileSync(process.env.GITHUB_ENV, 'base_coverage_artifacts_found=true\n');
+                core.notice(`Found ${matches.length} base coverage artifacts in run ${run.id} on ${baseBranch}.`);
+                return;
+              }
+            }
+
+            fs.appendFileSync(process.env.GITHUB_ENV, 'base_coverage_run_id=\n');
+            fs.appendFileSync(process.env.GITHUB_ENV, 'base_coverage_artifacts_found=false\n');
+            core.notice(`No coverage artifacts with prefix ${prefix} were found on ${baseBranch}.`);
+          } catch (error) {
+            fs.appendFileSync(process.env.GITHUB_ENV, 'base_coverage_run_id=\n');
+            fs.appendFileSync(process.env.GITHUB_ENV, 'base_coverage_artifacts_found=false\n');
+            core.warning(`Could not find base branch coverage artifacts: ${error.message}`);
+          }
+
+    - name: Downloading base branch coverage artifacts
+      if: ${{ always() && github.event_name == 'pull_request' && env.base_coverage_artifacts_found == 'true' }}
+      continue-on-error: true
+      uses: actions/download-artifact@v4
+      with:
+        pattern: ${{ inputs.artifact-prefix }}*
+        path: ${{ github.workspace }}/coverage-summary/base
+        merge-multiple: false
+        run-id: ${{ env.base_coverage_run_id }}
+        github-token: ${{ github.token }}
+        repository: ${{ github.repository }}
+
+    - name: Commenting combined PR coverage diff
+      if: ${{ always() && github.event_name == 'pull_request' }}
+      continue-on-error: true
+      uses: actions/github-script@v7
+      env:
+        ARTIFACT_PREFIX: ${{ inputs.artifact-prefix }}
+        BASE_ARTIFACTS_FOUND: ${{ env.base_coverage_artifacts_found }}
+      with:
+        github-token: ${{ github.token }}
+        script: |
+          const fs = require('fs');
+          const path = require('path');
+          const {owner, repo} = context.repo;
+          const issue_number = context.payload.pull_request.number;
+          const marker = '<!-- moodle-test-action-coverage-summary -->';
+
+          function decodeXml(value) {
+            return value
+              .replace(/&quot;/g, '"')
+              .replace(/&apos;/g, "'")
+              .replace(/&lt;/g, '<')
+              .replace(/&gt;/g, '>')
+              .replace(/&amp;/g, '&');
+          }
+
+          function attrs(tag) {
+            const result = {};
+            for (const match of tag.matchAll(/([A-Za-z_:][A-Za-z0-9_.:-]*)="([^"]*)"/g)) {
+              result[match[1]] = decodeXml(match[2]);
+            }
+            return result;
+          }
+
+          function findCloverFiles(dir) {
+            const result = [];
+            if (!fs.existsSync(dir)) {
+              return result;
+            }
+            const stack = [dir];
+            while (stack.length > 0) {
+              const current = stack.pop();
+              for (const entry of fs.readdirSync(current, {withFileTypes: true})) {
+                const full = path.join(current, entry.name);
+                if (entry.isDirectory()) {
+                  stack.push(full);
+                } else if (entry.isFile() && entry.name === 'clover.xml') {
+                  result.push(full);
+                }
+              }
+            }
+            return result.sort();
+          }
+
+          function readCoverageMetadata(cloverPath) {
+            const metadataPath = path.join(path.dirname(cloverPath), 'metadata.json');
+            if (!fs.existsSync(metadataPath)) {
+              return {};
+            }
+
+            try {
+              return JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
+            } catch (error) {
+              core.warning(`Could not parse coverage metadata at ${metadataPath}: ${error.message}`);
+              return {};
+            }
+          }
+
+          function relativeName(name, pluginPath) {
+            const moodleIndex = name.indexOf('/moodle/');
+            let relative = moodleIndex >= 0 ? name.slice(moodleIndex + '/moodle/'.length) : name;
+            if (relative.startsWith('public/')) {
+              relative = relative.slice('public/'.length);
+            }
+
+            const normalizedPluginPath = (pluginPath || '').replace(/^\/+|\/+$/g, '').replace(/^public\//, '');
+            if (normalizedPluginPath && relative.startsWith(`${normalizedPluginPath}/`)) {
+              relative = relative.slice(normalizedPluginPath.length + 1);
+            }
+
+            return relative;
+          }
+
+          function addLine(file, lineNumber, isCovered) {
+            if (!file.lines[lineNumber]) {
+              file.lines[lineNumber] = false;
+            }
+            file.lines[lineNumber] = file.lines[lineNumber] || isCovered;
+          }
+
+          function mergeCloverFiles(files) {
+            const merged = {files: {}, artifactCount: files.length};
+            for (const filePath of files) {
+              const metadata = readCoverageMetadata(filePath);
+              const xml = fs.readFileSync(filePath, 'utf8');
+              for (const match of xml.matchAll(/<file\b[^>]*name="[^"]*"[^>]*>[\s\S]*?<\/file>/g)) {
+                const block = match[0];
+                const fileTag = block.match(/<file\b[^>]*>/)[0];
+                const name = relativeName(attrs(fileTag).name || '', metadata.pluginPath);
+                if (!name) {
+                  continue;
+                }
+                if (!merged.files[name]) {
+                  merged.files[name] = {lines: {}};
+                }
+                for (const lineMatch of block.matchAll(/<line\b[^>]*>/g)) {
+                  const lineAttrs = attrs(lineMatch[0]);
+                  if (lineAttrs.type !== 'stmt' || !lineAttrs.num) {
+                    continue;
+                  }
+                  addLine(merged.files[name], lineAttrs.num, Number(lineAttrs.count || 0) > 0);
+                }
+              }
+            }
+
+            let total = 0;
+            let covered = 0;
+            for (const file of Object.values(merged.files)) {
+              file.total = Object.keys(file.lines).length;
+              file.covered = Object.values(file.lines).filter(Boolean).length;
+              file.percent = pct(file.covered, file.total);
+              total += file.total;
+              covered += file.covered;
+              delete file.lines;
+            }
+            merged.total = total;
+            merged.covered = covered;
+            merged.percent = pct(covered, total);
+            return merged;
+          }
+
+          function pct(covered, total) {
+            return total > 0 ? (covered / total) * 100 : 0;
+          }
+
+          function fmt(value) {
+            return `${value.toFixed(2)}%`;
+          }
+
+          function delta(value) {
+            const sign = value > 0 ? '+' : '';
+            return `${sign}${value.toFixed(2)}%`;
+          }
+
+          function cell(value) {
+            return value ? fmt(value.percent) : 'n/a';
+          }
+
+          function reason(message) {
+            return [
+              marker,
+              '## Combined Code Coverage Diff',
+              '',
+              message,
+            ].join('\n');
+          }
+
+          function buildDiff(base, pr) {
+            const rows = [];
+            const names = new Set([...Object.keys(base.files), ...Object.keys(pr.files)]);
+            for (const name of names) {
+              const before = base.files[name];
+              const after = pr.files[name];
+              const change = before && after ? after.percent - before.percent : null;
+              rows.push({name, before, after, change});
+            }
+
+            rows.sort((a, b) => {
+              if (a.change === null && b.change === null) return a.name.localeCompare(b.name);
+              if (a.change === null) return 1;
+              if (b.change === null) return -1;
+              return a.change - b.change;
+            });
+
+            const lines = [
+              marker,
+              '## Combined Code Coverage Diff',
+              '',
+              `Artifact prefix: \`${process.env.ARTIFACT_PREFIX}\``,
+              `PR artifacts merged: ${pr.artifactCount}`,
+              `Base artifacts merged: ${base.artifactCount}`,
+              '',
+              '| Total | Base | PR | Diff |',
+              '| --- | ---: | ---: | ---: |',
+              `| Statements | ${fmt(base.percent)} (${base.covered}/${base.total}) | ${fmt(pr.percent)} (${pr.covered}/${pr.total}) | ${delta(pr.percent - base.percent)} |`,
+              '',
+              '| File | Base | PR | Diff |',
+              '| --- | ---: | ---: | ---: |',
+            ];
+
+            const shown = rows.slice(0, 100);
+            for (const row of shown) {
+              const diff = row.change === null ? (row.before ? 'removed' : 'added') : delta(row.change);
+              lines.push(`| \`${row.name}\` | ${cell(row.before)} | ${cell(row.after)} | ${diff} |`);
+            }
+
+            if (rows.length > shown.length) {
+              lines.push(`| ... | ... | ... | ${rows.length - shown.length} more files omitted |`);
+            }
+
+            return lines.join('\n');
+          }
+
+          const prFiles = findCloverFiles(path.join(process.env.GITHUB_WORKSPACE, 'coverage-summary', 'pr'));
+          const baseFiles = findCloverFiles(path.join(process.env.GITHUB_WORKSPACE, 'coverage-summary', 'base'));
+          let body;
+
+          try {
+            if (prFiles.length === 0) {
+              body = reason('No coverage diff is available because this PR run did not produce any `clover.xml` coverage artifacts.');
+            } else if (process.env.BASE_ARTIFACTS_FOUND !== 'true') {
+              body = reason('No coverage diff is available because no base-branch coverage artifacts were found, or the workflow token could not read artifacts. Run this workflow on the base branch first and ensure the workflow has `actions: read`, then rerun the PR workflow.');
+            } else if (baseFiles.length === 0) {
+              body = reason('No coverage diff is available because base-branch coverage artifacts could not be downloaded or did not contain `clover.xml`.');
+            } else {
+              body = buildDiff(mergeCloverFiles(baseFiles), mergeCloverFiles(prFiles));
+            }
+          } catch (error) {
+            body = reason(`No coverage diff is available because coverage parsing failed: ${error.message}`);
+          }
+
+          const comments = await github.paginate(github.rest.issues.listComments, {
+            owner,
+            repo,
+            issue_number,
+            per_page: 100,
+          });
+          const existing = comments.find((comment) => comment.user.type === 'Bot' && comment.body.includes(marker));
+          if (existing) {
+            await github.rest.issues.updateComment({owner, repo, comment_id: existing.id, body});
+          } else {
+            await github.rest.issues.createComment({owner, repo, issue_number, body});
+          }

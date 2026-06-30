@@ -3,7 +3,20 @@ name: Integration & Unit test
 on:
   pull_request:
     branches:
+      - main
+      - master
       - MOODLE_*_STABLE
+  push:
+    branches:
+      - main
+      - master
+      - MOODLE_*_STABLE
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: write
+  issues: write
 
 jobs:
   PHPUnit:
@@ -40,3 +53,11 @@ jobs:
           dependencies: ${{ env.DEPENDENCIES }}
           PRIVATE_REPO_TOKEN: ${{ secrets.MOODLE_GH_KEY }}
           additional_phpunit_arguments: 'something'
+
+  Coverage:
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    needs: PHPUnit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Combined code coverage diff
+        uses: praxisdigital/moodle-test-action/coverage-summary@master

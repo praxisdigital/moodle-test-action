@@ -8,6 +8,58 @@
 
 # Usage
 
+Coverage is always generated. The action uploads a Clover/text coverage report as
+a workflow artifact for every run. Add the `coverage-summary` action as a final
+job after the PHPUnit matrix to merge all Clover artifacts from the PR run,
+download and merge matching artifacts from the latest successful base-branch run,
+and update one PR comment with the combined total and file-by-file coverage diff.
+If matching base artifacts do not exist yet, the PR comment explains why no diff
+was available.
+
+For coverage diffs to work, run the caller workflow on both pull requests and
+pushes to the branches used as PR bases:
+
+```yaml
+on:
+  pull_request:
+    branches:
+      - main
+      - master
+      - MOODLE_*_STABLE
+  push:
+    branches:
+      - main
+      - master
+      - MOODLE_*_STABLE
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: write
+  issues: write
+```
+
+Add a summary job after the PHPUnit matrix to comment the combined coverage diff:
+
+```yaml
+jobs:
+  PHPUnit:
+    strategy:
+      matrix:
+        # ...
+    steps:
+      - uses: praxisdigital/moodle-test-action@master
+        with:
+          # ...
+
+  Coverage:
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    needs: PHPUnit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: praxisdigital/moodle-test-action/coverage-summary@master
+```
+
 <!-- start usage -->
 ```yaml
 - uses: praxisdigital/moodle-test-action@master

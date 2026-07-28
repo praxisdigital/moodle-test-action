@@ -1,36 +1,32 @@
-name: Integration & Unit test
+name: Moodle CI
 
 on:
   pull_request:
     branches:
+      - main
+      - master
       - MOODLE_*_STABLE
+  push:
+    branches:
+      - main
+      - master
+      - MOODLE_*_STABLE
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  pull_request_review:
+    types: [submitted]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: write
+  issues: write
+  statuses: write
 
 jobs:
-  PHPUnit:
-    runs-on: ${{ matrix.os }}
-    continue-on-error: ${{ matrix.experimental }}
-    strategy:
-      matrix:
-        # The variable is available in https://github.com/praxisdigital/local_pxsdk/settings/variables/actions
-        php: ${{ fromJSON(vars.MOODLE_SUPPORTED_PHP_VERSIONS) }}
-        moodle: ${{ fromJSON(vars.MOODLE_SUPPORTED_VERSIONS) }}
-        moodle_repos: ${{ fromJSON(vars.MOODLE_REPOS) }}
-        os: ${{ fromJSON(vars.MOODLE_OS || '["ubuntu-latest"]') }}
-        dbtype: ${{ fromJSON(vars.MOODLE_DB_TYPES || '["mysqli", "sqlsrv"]') }}
-        experimental: ${{ fromJSON(vars.MOODLE_EXPERIMENTAL || '[false]') }}
-        dependencies: ["${{ join(fromJSON(vars.MOODLE_PLUGIN_DEPENDENCIES || '[]'), ' ') }}"]
-        exclude: ${{ fromJSON(vars.MOODLE_EXCLUDE_MATRIX || '[]') }}
-    steps:
-      - name: Unit testing & integration testing
-        uses: praxisdigital/moodle-test-action@master
-        with:
-          plugin: local_pxsdk
-          plugin-path: local/pxsdk
-          os: ${{ matrix.os || 'ubuntu-latest' }}
-          php: ${{ matrix.php }}
-          dbtype: ${{ matrix.dbtype || 'mysqli' }}
-          moodle: ${{ matrix.moodle }}
-          moodle_repository: ${{ matrix.moodle_repos || 'moodle/moodle' }}
-          experimental: ${{ matrix.experimental || false }}
-          dependencies: ${{ matrix.dependencies || '' }}
-          PRIVATE_REPO_TOKEN: ${{ secrets.MOODLE_GH_KEY }}
+  ci:
+    uses: praxisdigital/moodle-test-action/.github/workflows/ci.yml@master
+    secrets: inherit

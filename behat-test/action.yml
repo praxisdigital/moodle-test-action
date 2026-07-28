@@ -1,0 +1,512 @@
+name: Behat test
+description: 'Run Moodle Behat tests for a plugin when feature files are present'
+
+inputs:
+  moodle:
+    description: 'Moodle version (branch, tag or commit)'
+    required: false
+    default: 'MOODLE_405_STABLE'
+  php:
+    description: 'PHP version'
+    required: false
+    default: '8.3'
+  dbtype:
+    description: 'Database type (mysqli or pgsql)'
+    required: false
+    default: 'mysqli'
+  moodle_repository:
+    description: 'Moodle repository, e.g. moodle/moodle'
+    required: false
+    default: 'moodle/moodle'
+  dependencies:
+    description: 'Plugin dependencies in org/repo@ref format, one per line or space separated'
+    required: false
+    default: ''
+  additional_behat_arguments:
+    description: 'Additional arguments to pass to the Moodle Behat runner'
+    required: false
+    default: ''
+  behat_increase_timeout:
+    description: 'Multiplier for Moodle Behat timeouts; use 0 to disable'
+    required: false
+    default: '2'
+  behat_step_timeout_minutes:
+    description: 'Maximum minutes allowed for the Behat runner step'
+    required: false
+    default: '15'
+  post_no_tests_comment:
+    description: 'Post a PR comment when Behat is requested but no Behat feature files exist'
+    required: false
+    default: 'false'
+  pull_request_number:
+    description: 'Optional pull request number to test; auto-detected for issue_comment and pull_request events'
+    required: false
+    default: ''
+  PRIVATE_REPO_TOKEN:
+    description: 'Optional token for private dependency repositories'
+    required: false
+    default: ''
+  status_token:
+    description: 'Optional token used to publish on-demand Behat commit statuses'
+    required: false
+    default: ''
+  status_sha:
+    description: 'Optional commit SHA to publish on-demand Behat statuses against'
+    required: false
+    default: ''
+  status_context:
+    description: 'Optional commit status context for on-demand Behat runs'
+    required: false
+    default: ''
+  status_tags:
+    description: 'Optional Behat tags shown in on-demand Behat status descriptions'
+    required: false
+    default: ''
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Mark Behat status as pending
+      if: ${{ inputs.status_sha != '' && inputs.status_context != '' }}
+      uses: actions/github-script@v8
+      continue-on-error: true
+      with:
+        github-token: ${{ inputs.status_token || github.token }}
+        script: |
+          const { owner, repo } = context.repo;
+          const tags = '${{ inputs.status_tags }}';
+          await github.rest.repos.createCommitStatus({
+            owner,
+            repo,
+            sha: '${{ inputs.status_sha }}',
+            state: 'pending',
+            context: '${{ inputs.status_context }}',
+            description: tags ? `Behat requested for ${tags} is running` : 'Behat requested by #behat is running',
+            target_url: `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`,
+          });
+
+    - name: Resolve test target
+      id: target
+      uses: actions/github-script@v8
+      with:
+        script: |
+          const { owner, repo } = context.repo;
+          const explicitPullNumber = '${{ inputs.pull_request_number }}';
+
+          if (context.eventName === 'issue_comment') {
+            if (!context.payload.issue?.pull_request) {
+              core.setFailed('This comment is not on a pull request.');
+              return;
+            }
+            const pullNumber = context.payload.issue.number;
+            core.setOutput('checkout_repository', `${owner}/${repo}`);
+            core.setOutput('checkout_ref', `refs/pull/${pullNumber}/merge`);
+            core.setOutput('comment_issue_number', String(pullNumber));
+            return;
+          }
+
+          if (context.eventName === 'pull_request') {
+            const pullNumber = context.payload.pull_request.number;
+            core.setOutput('checkout_repository', `${owner}/${repo}`);
+            core.setOutput('checkout_ref', `refs/pull/${pullNumber}/merge`);
+            core.setOutput('comment_issue_number', String(pullNumber));
+            return;
+          }
+
+          if (explicitPullNumber) {
+            const pullNumber = Number(explicitPullNumber);
+            if (!Number.isInteger(pullNumber) || pullNumber < 1) {
+              core.setFailed(`Invalid pull_request_number: ${explicitPullNumber}`);
+              return;
+            }
+            core.setOutput('checkout_repository', `${owner}/${repo}`);
+            core.setOutput('checkout_ref', `refs/pull/${pullNumber}/merge`);
+            core.setOutput('comment_issue_number', String(pullNumber));
+            return;
+          }
+
+          core.setOutput('checkout_repository', `${owner}/${repo}`);
+          core.setOutput('checkout_ref', context.sha);
+          core.setOutput('comment_issue_number', '');
+
+    - name: Check out plugin target
+      uses: actions/checkout@v6
+      with:
+        repository: ${{ steps.target.outputs.checkout_repository }}
+        ref: ${{ steps.target.outputs.checkout_ref }}
+        path: plugin-src
+        persist-credentials: false
+
+    - name: Detect Behat feature files
+      id: detect
+      shell: bash
+      run: |
+        shopt -s nullglob globstar
+        features=(plugin-src/tests/behat/*.feature plugin-src/**/tests/behat/*.feature)
+        if [ ${#features[@]} -eq 0 ]; then
+          echo "::warning::Behat was requested, but no Behat feature files were found under tests/behat/*.feature"
+          echo "has_behat=false" >> "$GITHUB_OUTPUT"
+        else
+          printf 'Detected Behat feature files:\n'
+          printf '%s\n' "${features[@]}"
+          echo "has_behat=true" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Resolve plugin component
+      if: ${{ steps.detect.outputs.has_behat == 'true' }}
+      id: component
+      shell: bash
+      run: |
+        version_file="plugin-src/version.php"
+        if [ ! -f "$version_file" ]; then
+          echo "version.php not found at $version_file"
+          exit 1
+        fi
+        component=$(sed -En 's/^[[:space:]]*\$plugin->component[[:space:]]*=[[:space:]]*["'"'"']([^"'"'"']+)["'"'"'][[:space:]]*;.*/\1/p' "$version_file")
+        if [ -z "$component" ]; then
+          echo "Failed to determine plugin component from $version_file"
+          exit 1
+        fi
+        if ! [[ "$component" =~ ^[a-z][a-z0-9]*_[a-z][a-z0-9_]*$ ]]; then
+          echo "Invalid Moodle component name: $component"
+          exit 1
+        fi
+        echo "component=$component" >> "$GITHUB_OUTPUT"
+        echo "Detected component: $component"
+
+    - name: Comment when no Behat tests exist
+      if: ${{ steps.detect.outputs.has_behat == 'false' && inputs.post_no_tests_comment == 'true' && steps.target.outputs.comment_issue_number != '' }}
+      uses: actions/github-script@v8
+      with:
+        script: |
+          const { owner, repo } = context.repo;
+          await github.rest.issues.createComment({
+            owner,
+            repo,
+            issue_number: Number('${{ steps.target.outputs.comment_issue_number }}'),
+            body: 'Behat was requested, but no Behat feature files were found.\n\nExpected location:\n`tests/behat/*.feature`\n\nThis does not block merging.'
+          });
+
+    - name: Validate database type
+      if: ${{ steps.detect.outputs.has_behat == 'true' }}
+      shell: bash
+      run: |
+        case "${{ inputs.dbtype }}" in
+          mysqli|pgsql) ;;
+          *)
+            echo "Unsupported dbtype for Behat: ${{ inputs.dbtype }}. Supported values: mysqli, pgsql."
+            exit 1
+            ;;
+        esac
+
+    - name: Start MySQL service
+      if: ${{ steps.detect.outputs.has_behat == 'true' && inputs.dbtype == 'mysqli' }}
+      uses: praxisdigital/mysql-action@tmpfs-and-docker-patch
+      with:
+        collation server: utf8mb4_unicode_ci
+        mysql version: 8
+        mysql database: test
+        mysql user: test
+        mysql password: test
+        use tmpfs: true
+
+    - name: Start PostgreSQL service
+      if: ${{ steps.detect.outputs.has_behat == 'true' && inputs.dbtype == 'pgsql' }}
+      uses: m4nu56/postgresql-action@v1
+      with:
+        postgresql version: 16
+        postgresql db: test
+        postgresql user: test
+        postgresql password: test
+
+    - name: Start Selenium service
+      if: ${{ steps.detect.outputs.has_behat == 'true' }}
+      shell: bash
+      run: |
+        docker run -d --name selenium --network host --shm-size=2g selenium/standalone-chrome:latest
+
+    - name: Set up PHP ${{ inputs.php }}
+      if: ${{ steps.detect.outputs.has_behat == 'true' }}
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: ${{ inputs.php }}
+        coverage: none
+        ini-values: max_input_vars=5000
+        extensions: mysqli, pgsql, zip, intl, soap, gd, xml, mbstring, curl, sodium, exif
+        tools: composer:v2
+
+    - name: Check out Moodle
+      if: ${{ steps.detect.outputs.has_behat == 'true' }}
+      uses: actions/checkout@v6
+      with:
+        repository: ${{ inputs.moodle_repository }}
+        ref: ${{ inputs.moodle }}
+        path: moodle
+        token: ${{ inputs.PRIVATE_REPO_TOKEN || github.token }}
+        persist-credentials: false
+
+    - name: Resolve Moodle paths
+      if: ${{ steps.detect.outputs.has_behat == 'true' }}
+      shell: bash
+      run: |
+        echo "MOODLE_DIR=$GITHUB_WORKSPACE/moodle" >> "$GITHUB_ENV"
+        if [ -d "$GITHUB_WORKSPACE/moodle/public" ]; then
+          echo "MOODLE_PUBLIC_DIR=$GITHUB_WORKSPACE/moodle/public" >> "$GITHUB_ENV"
+        else
+          echo "MOODLE_PUBLIC_DIR=$GITHUB_WORKSPACE/moodle" >> "$GITHUB_ENV"
+        fi
+
+    - name: Install Composer dependencies
+      if: ${{ steps.detect.outputs.has_behat == 'true' }}
+      shell: bash
+      run: composer install --no-interaction --prefer-dist --no-progress
+      working-directory: ${{ github.workspace }}/moodle
+
+    - name: Configure Moodle
+      if: ${{ steps.detect.outputs.has_behat == 'true' }}
+      shell: bash
+      env:
+        DBTYPE: ${{ inputs.dbtype }}
+        BEHAT_INCREASE_TIMEOUT: ${{ inputs.behat_increase_timeout }}
+      run: |
+        mkdir -p "$GITHUB_WORKSPACE/moodledata" "$GITHUB_WORKSPACE/behatdata" "$GITHUB_WORKSPACE/moodledata/localcachedir"
+        if ! [[ "$BEHAT_INCREASE_TIMEOUT" =~ ^[0-9]+$ ]]; then
+          echo "behat_increase_timeout must be a non-negative integer."
+          exit 1
+        fi
+        dboptions="[]"
+        if [ "$DBTYPE" != "pgsql" ]; then
+          dboptions="['dbcollation' => 'utf8mb4_unicode_ci']"
+        fi
+        setup_path="lib/setup.php"
+        if [ "$MOODLE_PUBLIC_DIR" != "$MOODLE_DIR" ]; then
+          setup_path="public/lib/setup.php"
+        fi
+
+        cat > "$MOODLE_DIR/config.php" <<PHP
+        <?php
+        unset(\$CFG);
+        global \$CFG;
+        \$CFG = new stdClass();
+        \$CFG->dbtype = '$DBTYPE';
+        \$CFG->dblibrary = 'native';
+        \$CFG->dbhost = '127.0.0.1';
+        \$CFG->dbname = 'test';
+        \$CFG->dbuser = 'test';
+        \$CFG->dbpass = 'test';
+        \$CFG->prefix = 'm_';
+        \$CFG->dboptions = $dboptions;
+        \$CFG->wwwroot = 'http://localhost:8000';
+        \$CFG->dataroot = '$GITHUB_WORKSPACE/moodledata';
+        \$CFG->localcachedir = '$GITHUB_WORKSPACE/moodledata/localcachedir';
+        \$CFG->admin = 'admin';
+        \$CFG->directorypermissions = 0777;
+        \$CFG->debug = E_ALL;
+        \$CFG->debugdisplay = 1;
+        \$CFG->debugstringids = 1;
+        \$CFG->perfdebug = 15;
+        \$CFG->debugpageinfo = 1;
+        \$CFG->allowthemechangeonurl = 1;
+        \$CFG->passwordpolicy = 0;
+        \$CFG->cronclionly = 0;
+        \$CFG->pathtophp = PHP_BINARY;
+        \$CFG->behat_wwwroot = 'http://127.0.0.1:8000';
+        \$CFG->behat_dataroot = '$GITHUB_WORKSPACE/behatdata';
+        \$CFG->behat_prefix = 'b_';
+        if ($BEHAT_INCREASE_TIMEOUT > 0) {
+            \$CFG->behat_increasetimeout = $BEHAT_INCREASE_TIMEOUT;
+        }
+        \$CFG->behat_profiles = [
+            'default' => [
+                'browser' => 'chrome',
+                'wd_host' => 'http://127.0.0.1:4444/wd/hub',
+                'capabilities' => [
+                    'extra_capabilities' => [
+                        'chromeOptions' => [
+                            'args' => ['--no-sandbox', '--disable-dev-shm-usage'],
+                        ],
+                    ],
+                ],
+            ],
+        ];
+        require_once(__DIR__ . '/$setup_path');
+        PHP
+
+    - name: Resolve plugin install path
+      if: ${{ steps.detect.outputs.has_behat == 'true' }}
+      shell: bash
+      env:
+        COMPONENT: ${{ steps.component.outputs.component }}
+      run: |
+        plugin_path=$(php -r "CONST CLI_SCRIPT = true; require_once '$MOODLE_DIR/config.php'; if (file_exists('$MOODLE_PUBLIC_DIR/lib/classes/component.php')) { require_once '$MOODLE_PUBLIC_DIR/lib/classes/component.php'; } else { require_once '$MOODLE_DIR/lib/classes/component.php'; } class_exists('core\\component') === false && class_alias('core_component', '\\core\\component'); use core\\component; [\$plugin_type, \$name] = component::normalize_component('$COMPONENT'); \$plugin_types = component::get_plugin_types(); echo empty(\$plugin_types[\$plugin_type]) ? '' : \$plugin_types[\$plugin_type] . '/' . \$name;")
+        if [ -z "$plugin_path" ]; then
+          echo "Failed to determine install path for component: $COMPONENT"
+          exit 1
+        fi
+        plugin_path=${plugin_path#"$MOODLE_DIR/"}
+        echo "PLUGIN_PATH=$plugin_path" >> "$GITHUB_ENV"
+        echo "Resolved plugin path: $plugin_path"
+
+    - name: Install plugin under test
+      if: ${{ steps.detect.outputs.has_behat == 'true' }}
+      shell: bash
+      run: |
+        mkdir -p "$MOODLE_DIR/$(dirname "$PLUGIN_PATH")"
+        rsync -a --delete --exclude='.git' "$GITHUB_WORKSPACE/plugin-src/" "$MOODLE_DIR/$PLUGIN_PATH/"
+
+    - name: Check out dependencies
+      if: ${{ steps.detect.outputs.has_behat == 'true' && inputs.dependencies != '' }}
+      shell: bash
+      env:
+        DEPENDENCIES: ${{ inputs.dependencies }}
+        PRIVATE_REPO_TOKEN: ${{ inputs.PRIVATE_REPO_TOKEN }}
+      run: |
+        resolve_plugin_path() {
+          local component="$1"
+          php -r "CONST CLI_SCRIPT = true; require_once '$MOODLE_DIR/config.php'; if (file_exists('$MOODLE_PUBLIC_DIR/lib/classes/component.php')) { require_once '$MOODLE_PUBLIC_DIR/lib/classes/component.php'; } else { require_once '$MOODLE_DIR/lib/classes/component.php'; } class_exists('core\\component') === false && class_alias('core_component', '\\core\\component'); use core\\component; [\$plugin_type, \$name] = component::normalize_component('$component'); \$plugin_types = component::get_plugin_types(); echo empty(\$plugin_types[\$plugin_type]) ? '' : \$plugin_types[\$plugin_type] . '/' . \$name;"
+        }
+
+        while IFS= read -r dep; do
+          [ -n "$dep" ] || continue
+          repo="${dep%@*}"
+          ref="${dep#*@}"
+          if [ "$repo" = "$ref" ]; then
+            echo "Dependency must use org/repo@ref format: $dep"
+            exit 1
+          fi
+
+          tmpdir="$GITHUB_WORKSPACE/dependencies/$repo"
+          clone_url="https://github.com/$repo.git"
+          if [ -n "$PRIVATE_REPO_TOKEN" ]; then
+            clone_url="https://x-access-token:${PRIVATE_REPO_TOKEN}@github.com/$repo.git"
+          fi
+          git clone --quiet "$clone_url" "$tmpdir"
+          git -C "$tmpdir" checkout --quiet "$ref"
+          component=$(sed -En 's/^[[:space:]]*\$plugin->component[[:space:]]*=[[:space:]]*["'"'"']([^"'"'"']+)["'"'"'][[:space:]]*;.*/\1/p' "$tmpdir/version.php")
+          if [ -z "$component" ]; then
+            echo "Failed to determine component for dependency $dep"
+            exit 1
+          fi
+          if ! [[ "$component" =~ ^[a-z][a-z0-9]*_[a-z][a-z0-9_]*$ ]]; then
+            echo "Invalid Moodle component name for dependency $dep: $component"
+            exit 1
+          fi
+          target=$(resolve_plugin_path "$component")
+          if [ -z "$target" ]; then
+            echo "Failed to determine install path for dependency $dep: $component"
+            exit 1
+          fi
+          target=${target#"$MOODLE_DIR/"}
+          mkdir -p "$MOODLE_DIR/$(dirname "$target")"
+          rsync -a --delete --exclude='.git' "$tmpdir/" "$MOODLE_DIR/$target/"
+        done < <(printf '%s\n' "$DEPENDENCIES" | tr ' ' '\n')
+
+    - name: Wait for Selenium
+      if: ${{ steps.detect.outputs.has_behat == 'true' }}
+      shell: bash
+      run: |
+        for attempt in {1..30}; do
+          if curl -fsS http://127.0.0.1:4444/status >/dev/null; then
+            exit 0
+          fi
+          sleep 2
+        done
+        echo "Selenium did not become ready in time."
+        exit 1
+
+    - name: Start Moodle web server
+      if: ${{ steps.detect.outputs.has_behat == 'true' }}
+      shell: bash
+      run: |
+        php -S 0.0.0.0:8000 -t "$MOODLE_PUBLIC_DIR" > "$GITHUB_WORKSPACE/moodle-server.log" 2>&1 &
+        echo $! > "$GITHUB_WORKSPACE/moodle-server.pid"
+        for attempt in {1..30}; do
+          if curl -sS http://127.0.0.1:8000 >/dev/null; then
+            exit 0
+          fi
+          sleep 2
+        done
+        echo "Moodle web server did not become ready in time."
+        exit 1
+
+    - name: Initialize Behat
+      if: ${{ steps.detect.outputs.has_behat == 'true' }}
+      shell: bash
+      run: |
+        sudo locale-gen en_AU.UTF-8
+        php "$MOODLE_PUBLIC_DIR/admin/tool/behat/cli/init.php"
+
+    - name: Run plugin Behat tests
+      id: run_behat
+      if: ${{ steps.detect.outputs.has_behat == 'true' }}
+      shell: bash
+      continue-on-error: ${{ inputs.status_sha != '' && inputs.status_context != '' }}
+      env:
+        ADDITIONAL_BEHAT_ARGUMENTS: ${{ inputs.additional_behat_arguments }}
+        BEHAT_STEP_TIMEOUT_MINUTES: ${{ inputs.behat_step_timeout_minutes }}
+      run: |
+        if ! [[ "$BEHAT_STEP_TIMEOUT_MINUTES" =~ ^[1-9][0-9]*$ ]]; then
+          echo "behat_step_timeout_minutes must be a positive integer."
+          exit 1
+        fi
+        feature_dir="$MOODLE_DIR/$PLUGIN_PATH/tests/behat"
+        if [ ! -d "$feature_dir" ]; then
+          echo "::warning::Behat feature directory disappeared before execution: $feature_dir"
+          exit 0
+        fi
+        set +e
+        timeout --preserve-status "${BEHAT_STEP_TIMEOUT_MINUTES}m" php "$MOODLE_PUBLIC_DIR/admin/tool/behat/cli/run.php" "$feature_dir" $ADDITIONAL_BEHAT_ARGUMENTS
+        status=$?
+        set -e
+        if [ "$status" -eq 143 ] || [ "$status" -eq 124 ]; then
+          echo "Behat runner exceeded ${BEHAT_STEP_TIMEOUT_MINUTES} minutes."
+        fi
+        echo "status=$status" >> "$GITHUB_OUTPUT"
+        exit "$status"
+
+    - name: Mark Behat status as completed
+      if: ${{ always() && inputs.status_sha != '' && inputs.status_context != '' }}
+      uses: actions/github-script@v8
+      continue-on-error: true
+      env:
+        BEHAT_OUTCOME: ${{ steps.run_behat.outcome }}
+      with:
+        github-token: ${{ inputs.status_token || github.token }}
+        script: |
+          const { owner, repo } = context.repo;
+          const outcome = process.env.BEHAT_OUTCOME || 'failure';
+          const tags = '${{ inputs.status_tags }}';
+          const state = outcome === 'success' ? 'success' : outcome === 'cancelled' ? 'error' : 'failure';
+          const description = state === 'success'
+            ? (tags ? `Behat requested for ${tags} passed` : 'Behat requested by #behat passed')
+            : state === 'error'
+              ? (tags ? `Behat requested for ${tags} was cancelled` : 'Behat requested by #behat was cancelled')
+              : (tags ? `Behat requested for ${tags} failed` : 'Behat requested by #behat failed');
+
+          await github.rest.repos.createCommitStatus({
+            owner,
+            repo,
+            sha: '${{ inputs.status_sha }}',
+            state,
+            context: '${{ inputs.status_context }}',
+            description,
+            target_url: `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`,
+          });
+
+    - name: Fail job when on-demand Behat failed
+      if: ${{ inputs.status_sha != '' && inputs.status_context != '' && steps.run_behat.outcome != 'success' }}
+      shell: bash
+      run: exit 1
+
+    - name: Upload Behat artifacts
+      if: ${{ steps.detect.outputs.has_behat == 'true' && (failure() || steps.run_behat.outputs.status != '0') }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: behat-artifacts
+        if-no-files-found: ignore
+        path: |
+          moodle-server.log
+          moodledata/behat
+          behatdata
+          moodle/behat_faildump
+          moodle/public/behat_faildump

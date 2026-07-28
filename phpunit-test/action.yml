@@ -1,0 +1,326 @@
+name: PHPUnit test
+description: 'Run PHPUnit tests for Moodle'
+
+inputs:
+  plugin:
+    description: 'Plugin name (component name). Optional override; if empty, it will be auto-detected from version.php.'
+    required: false
+    default: ''
+  plugin-path:
+    description: 'Plugin path. Optional override; if empty, it will be auto-detected from version.php.'
+    required: false
+    default: ''
+  php:
+    description: 'PHP version'
+    required: true
+  moodle:
+    description: 'Moodle version (branch, tag or commit)'
+    required: true
+  moodle_repository:
+    description: 'Moodle repository, e.g. moodle/moodle'
+    required: false
+    default: 'moodle/moodle'
+  os:
+    description: 'Operating system'
+    required: true
+  additional_phpunit_arguments:
+    description: 'Additional arguments to pass to phpunit'
+    required: false
+    default: ''
+  org:
+    description: 'Organization'
+    required: false
+    default: 'praxisdigital'
+  dependencies:
+    description: >
+      Plugin dependencies.
+      Format: org/repo@ref
+      Example: |
+        praxisdigital/assignsubmission_pxaiwriter@master
+        praxisdigital/mod_smartlink@MOODLE_42_STABLE
+    required: false
+    default: ''
+  dbtype:
+    description: 'Database type (mysqli, pgsql, sqlsrv)'
+    required: false
+    default: 'mysqli'
+  experimental:
+    description: 'Is experimental run'
+    required: false
+    default: 'false'
+  PRIVATE_REPO_TOKEN:
+    description: 'Optional token for private repositories'
+    required: false
+    default: ''
+  fail_on_empty_test_suite:
+    description: 'Fail the job if PHPUnit executes no tests'
+    required: false
+    default: 'true'
+  checkout_ref:
+    description: 'Git ref to check out for the plugin under test'
+    required: false
+    default: ''
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Setting up DB mysql
+      if: ${{ inputs.dbtype == 'mysqli' }}
+      uses: praxisdigital/mysql-action@tmpfs-and-docker-patch
+      with:
+        collation server: utf8mb4_danish_ci
+        mysql version: 8
+        mysql database: test
+        mysql user: test
+        mysql password: test
+        use tmpfs: true
+
+    - name: Setting up DB pgsql
+      if: ${{ inputs.dbtype == 'pgsql' }}
+      uses: m4nu56/postgresql-action@v1
+      with:
+        postgresql version: 16
+        postgresql db: test
+        postgresql user: test
+        postgresql password: test
+
+    - name: Setting up DB mssql
+      if: ${{ inputs.dbtype == 'sqlsrv' }}
+      uses: praxisdigital/setup-mssql-server@main
+      with:
+        version: 2022
+        user: test
+        password: test
+        database: test
+
+    - name: Setting up PHP ${{ matrix.php }}
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: ${{ inputs.php }}
+        coverage: none
+        ini-values: 'max_input_vars=5000'
+        extensions: sqlsrv, pdo_sqlsrv
+
+    - name: Download & Setup MSSQL ODBC driver for PHP
+      if: ${{ inputs.dbtype == 'sqlsrv' }}
+      shell: bash
+      env:
+        PHP_VERSION: ${{ inputs.php }}
+      run: |
+        if ! [[ "18.04 20.04 22.04 24.04 24.10" == *"$(grep VERSION_ID /etc/os-release | cut -d '"' -f 2)"* ]];
+        then
+            echo "Ubuntu $(grep VERSION_ID /etc/os-release | cut -d '"' -f 2) is not currently supported.";
+            exit;
+        fi
+
+        # Download the package to configure the Microsoft repo
+        curl -sSL -O https://packages.microsoft.com/config/ubuntu/$(grep VERSION_ID /etc/os-release | cut -d '"' -f 2)/packages-microsoft-prod.deb
+        # Install the package
+        sudo dpkg -i packages-microsoft-prod.deb
+        # Delete the file
+        rm packages-microsoft-prod.deb
+
+        # Install the driver
+        sudo apt-get update
+        sudo ACCEPT_EULA=Y apt-get install -y msodbcsql18
+        sudo ACCEPT_EULA=Y apt-get install -y mssql-tools18
+        echo 'export PATH="$PATH:/opt/mssql-tools18/bin"' >> ~/.bashrc
+        source ~/.bashrc
+        sudo apt-get install -y unixodbc-dev
+        sudo phpenmod -v $PHP_VERSION sqlsrv pdo_sqlsrv
+        php -m | grep -q 'sqlsrv' && echo "sqlsrv extension installed"
+        php -m | grep -q 'pdo_sqlsrv' && echo "pdo_sqlsrv extension installed"
+
+    - name: Checking out code from ${{ inputs.moodle_repository }}
+      uses: actions/checkout@v6
+      with:
+        repository: ${{ inputs.moodle_repository }}
+        ref: ${{ inputs.moodle }}
+        path: ${{ github.workspace }}/moodle
+        token: ${{ inputs.PRIVATE_REPO_TOKEN || github.token }}
+
+    - name: Setting up Moodle dataroot & config
+      shell: bash
+      env:
+        dbtype: ${{ inputs.dbtype }}
+      run: |
+        echo "pathtophp=$(which php)" >> $GITHUB_ENV # Inject installed pathtophp to env. The template config needs it.
+        touch $GITHUB_WORKSPACE/moodle/config.php
+        mkdir -p $GITHUB_WORKSPACE/moodledata
+        mkdir -p $GITHUB_WORKSPACE/moodledata/localcachedir
+        echo '<?php' >> $GITHUB_WORKSPACE/moodle/config.php
+        echo 'unset($CFG);' >> $GITHUB_WORKSPACE/moodle/config.php
+        echo 'global $CFG;' >> $GITHUB_WORKSPACE/moodle/config.php
+        echo '$CFG = new stdClass();' >> $GITHUB_WORKSPACE/moodle/config.php
+        echo "\$CFG->dbtype   = '$dbtype';" >> $GITHUB_WORKSPACE/moodle/config.php
+        echo '$CFG->dblibrary = "native";' >> $GITHUB_WORKSPACE/moodle/config.php
+        echo '$CFG->dbhost    = "127.0.0.1";' >> $GITHUB_WORKSPACE/moodle/config.php
+        echo '$CFG->dbname    = "test";' >> $GITHUB_WORKSPACE/moodle/config.php
+        echo '$CFG->dbuser    = "test";' >> $GITHUB_WORKSPACE/moodle/config.php
+        echo '$CFG->dbpass    = "test";' >> $GITHUB_WORKSPACE/moodle/config.php
+        echo '$CFG->prefix    = "m_";' >> $GITHUB_WORKSPACE/moodle/config.php
+        echo '$CFG->dboptions = [' >> $GITHUB_WORKSPACE/moodle/config.php
+        test "$dbtype" = "mysqli" && echo '    "dbcollation" => "utf8mb4_unicode_ci",' >> $GITHUB_WORKSPACE/moodle/config.php
+        echo '    "extrainfo" => [' >> $GITHUB_WORKSPACE/moodle/config.php
+        echo '        "TrustServerCertificate" => true' >> $GITHUB_WORKSPACE/moodle/config.php
+        echo '    ]' >> $GITHUB_WORKSPACE/moodle/config.php
+        echo '];' >> $GITHUB_WORKSPACE/moodle/config.php
+        echo '$host = "localhost";' >> $GITHUB_WORKSPACE/moodle/config.php
+        echo '$CFG->wwwroot   = "http://{$host}";' >> $GITHUB_WORKSPACE/moodle/config.php
+        echo "\$CFG->dataroot  = '$GITHUB_WORKSPACE/moodledata';" >> $GITHUB_WORKSPACE/moodle/config.php
+        echo "\$CFG->localcachedir  = '$GITHUB_WORKSPACE/moodledata/localcachedir';" >> $GITHUB_WORKSPACE/moodle/config.php
+        echo '$CFG->admin     = "admin";' >> $GITHUB_WORKSPACE/moodle/config.php
+        echo '$CFG->directorypermissions = 0777;' >> $GITHUB_WORKSPACE/moodle/config.php
+        echo '$CFG->debug = (E_ALL);' >> $GITHUB_WORKSPACE/moodle/config.php
+        echo '$CFG->debugdisplay = 1;' >> $GITHUB_WORKSPACE/moodle/config.php
+        echo '$CFG->debugstringids = 1;' >> $GITHUB_WORKSPACE/moodle/config.php
+        echo '$CFG->perfdebug = 15;' >> $GITHUB_WORKSPACE/moodle/config.php
+        echo '$CFG->debugpageinfo = 1;' >> $GITHUB_WORKSPACE/moodle/config.php
+        echo '$CFG->allowthemechangeonurl = 1;' >> $GITHUB_WORKSPACE/moodle/config.php
+        echo '$CFG->passwordpolicy = 0;' >> $GITHUB_WORKSPACE/moodle/config.php
+        echo '$CFG->cronclionly = 0;' >> $GITHUB_WORKSPACE/moodle/config.php
+        echo '$CFG->pathtophp = getenv("pathtophp");' >> $GITHUB_WORKSPACE/moodle/config.php
+        echo '$CFG->phpunit_dataroot  = realpath(dirname(__DIR__)) . "/phpunitdata";' >> $GITHUB_WORKSPACE/moodle/config.php
+        echo '$CFG->phpunit_prefix = "t_";' >> $GITHUB_WORKSPACE/moodle/config.php
+        echo 'define("TEST_EXTERNAL_FILES_HTTP_URL", "http://$host:8080");' >> $GITHUB_WORKSPACE/moodle/config.php
+        echo 'define("TEST_EXTERNAL_FILES_HTTPS_URL", "http://$host:8080");' >> $GITHUB_WORKSPACE/moodle/config.php
+        echo 'define("TEST_SESSION_REDIS_HOST", $host);' >> $GITHUB_WORKSPACE/moodle/config.php
+        echo 'define("TEST_CACHESTORE_REDIS_TESTSERVERS", $host);' >> $GITHUB_WORKSPACE/moodle/config.php
+        if [ -d "$GITHUB_WORKSPACE/moodle/public" ]; then
+          echo 'require_once(__DIR__ . "/public/lib/setup.php");' >> $GITHUB_WORKSPACE/moodle/config.php
+        else
+          echo 'require_once(__DIR__ . "/lib/setup.php");' >> $GITHUB_WORKSPACE/moodle/config.php
+        fi
+
+    - name: Check out code from ${{ github.repository }}
+      uses: actions/checkout@v6
+      with:
+        path: ${{ github.workspace }}/plugin-src
+        ref: ${{ inputs.checkout_ref || github.ref }}
+
+    - name: Resolve plugin component and install path
+      shell: bash
+      env:
+        PLUGIN_OVERRIDE: ${{ inputs.plugin }}
+        PLUGIN_PATH_OVERRIDE: ${{ inputs.plugin-path }}
+      run: |
+        VERSION_FILE="$GITHUB_WORKSPACE/plugin-src/version.php"
+        if [ ! -f "$VERSION_FILE" ]; then
+          echo "version.php not found at $VERSION_FILE"
+          exit 1
+        fi
+        component=$(sed -En 's/^[[:space:]]*\$plugin->component[[:space:]]*=[[:space:]]*["'"'"']([^"'"'"']+)["'"'"'][[:space:]]*;.*/\1/p' "$VERSION_FILE")
+        if [ -z "$component" ]; then
+          echo "Failed to determine component name from $VERSION_FILE"
+          exit 1
+        fi
+        echo "Auto-detected component from version.php: $component"
+
+        if [ -n "$PLUGIN_OVERRIDE" ]; then
+          echo "Overriding auto-detected component with inputs.plugin: $PLUGIN_OVERRIDE"
+          component="$PLUGIN_OVERRIDE"
+        fi
+        if ! [[ "$component" =~ ^[a-z][a-z0-9]*_[a-z][a-z0-9_]*$ ]]; then
+          echo "Invalid Moodle component name: $component"
+          exit 1
+        fi
+
+        if [ -n "$PLUGIN_PATH_OVERRIDE" ]; then
+          if [ -d "$GITHUB_WORKSPACE/moodle/public" ]; then
+            path="public/$PLUGIN_PATH_OVERRIDE"
+          else
+            path="$PLUGIN_PATH_OVERRIDE"
+          fi
+        else
+          path=$(php -r "CONST CLI_SCRIPT = true; require_once '$GITHUB_WORKSPACE/moodle/config.php'; if (file_exists('$GITHUB_WORKSPACE/moodle/public/lib/classes/component.php')) { require_once '$GITHUB_WORKSPACE/moodle/public/lib/classes/component.php'; } else { require_once '$GITHUB_WORKSPACE/moodle/lib/classes/component.php'; } class_exists('core\\component') === false && class_alias('core_component', '\\core\\component'); use core\\component; [\$plugin_type, \$name] = component::normalize_component('$component'); \$plugin_types = component::get_plugin_types(); echo empty(\$plugin_types[\$plugin_type]) ? '' : \$plugin_types[\$plugin_type] . '/' . \$name;")
+          if [ -z "$path" ]; then
+            echo "Failed to determine install path for component: $component"
+            exit 1
+          fi
+          path=${path#"$GITHUB_WORKSPACE/moodle/"}
+        fi
+
+        echo "Final component: $component"
+        echo "Resolved plugin path: $path"
+        echo "component=$component" >> $GITHUB_ENV
+        echo "resolved_plugin_path=$path" >> $GITHUB_ENV
+
+    - name: Install plugin under test
+      shell: bash
+      run: |
+        mkdir -p "$GITHUB_WORKSPACE/moodle/$(dirname "$resolved_plugin_path")"
+        rsync -a --delete --exclude='.git' "$GITHUB_WORKSPACE/plugin-src/" "$GITHUB_WORKSPACE/moodle/$resolved_plugin_path/"
+
+    - name: Checking out dependencies
+      if: ${{ inputs.dependencies != '' }}
+      shell: bash
+      env:
+        DEPENDENCIES: ${{ inputs.dependencies }}
+        ORG: ${{ inputs.org }}
+        PRIVATE_REPO_TOKEN: ${{ inputs.PRIVATE_REPO_TOKEN }}
+      run: |
+        # dependencies are in the format of org/repo@ref
+        dependencies="$DEPENDENCIES"
+        if [[ -z $dependencies ]]; then
+          echo "No dependencies to checkout"
+          exit 0
+        fi
+        for dep in $dependencies; do
+          repo=$(echo $dep | cut -d@ -f1)
+          ref=$(echo $dep | cut -d@ -f2)
+          url="https://github.com/${repo}.git"
+
+          # Convert to correct URL if private repo
+          if [[ $repo == "$ORG"/* && -n "$PRIVATE_REPO_TOKEN" ]]; then
+            printf "Checking out ${repo}@${ref} from github.com\n"
+            url="https://oauth2:${PRIVATE_REPO_TOKEN}@github.com/${repo}.git"
+          else
+            printf "Checking out (public) ${repo}@${ref} from github.com\n"
+          fi
+
+          # Get component name from version.php by cloning to a temp dir
+          echo "Auto determining component name for repo: $repo ..."
+          tmpdir=$GITHUB_WORKSPACE/tmp
+          mkdir -p $tmpdir
+          git clone --quiet $url $tmpdir/$repo
+          component=$(sed -En 's/^[[:space:]]*\$plugin->component[[:space:]]*=[[:space:]]*["'"'"']([^"'"'"']+)["'"'"'][[:space:]]*;.*/\1/p' $tmpdir/$repo/version.php)
+          rm -rf $tmpdir/$repo
+          echo "Auto determined component name: $component"
+
+          # Calculate the path to clone to inside moodle based on component name
+          echo "Auto determining path for component: $component ..."
+          path=$(php -r "CONST CLI_SCRIPT = true; require_once '$GITHUB_WORKSPACE/moodle/config.php'; if (file_exists('$GITHUB_WORKSPACE/moodle/public/lib/classes/component.php')) { require_once '$GITHUB_WORKSPACE/moodle/public/lib/classes/component.php'; } else { require_once '$GITHUB_WORKSPACE/moodle/lib/classes/component.php'; } class_exists('core\\component') === false && class_alias('core_component', '\\core\\component'); use core\\component; [\$plugin_type, \$name] = component::normalize_component('$component'); \$plugin_types = component::get_plugin_types();echo empty(\$plugin_types[\$plugin_type]) ? '' : \$plugin_types[\$plugin_type] . '/' . \$name;")
+          echo "Auto determined path: $path"
+
+          echo "Cloning $repo@$ref using $url to $path ..."
+          git clone $url $path
+          git -C $path checkout $ref
+        done
+
+    - name: Setting up PHPUnit
+      shell: bash
+      run: |
+        echo "pathtophp=$(which php)" >> $GITHUB_ENV # Inject installed pathtophp to env. The template config needs it.
+        mkdir $GITHUB_WORKSPACE/../moodledata
+        sudo locale-gen en_AU.UTF-8
+        test -f $GITHUB_WORKSPACE/moodle/public/admin/tool/phpunit/cli/init.php && php $GITHUB_WORKSPACE/moodle/public/admin/tool/phpunit/cli/init.php --no-composer-self-update || php $GITHUB_WORKSPACE/moodle/admin/tool/phpunit/cli/init.php --no-composer-self-update
+
+    - name: Running PHPUnit tests
+      shell: bash
+      env:
+        ADDITIONAL_STUFF: ${{ inputs.additional_phpunit_arguments }}
+        FAIL_ON_EMPTY: ${{ inputs.fail_on_empty_test_suite }}
+      run: |
+        PHPUNIT="$GITHUB_WORKSPACE/moodle/vendor/bin/phpunit"
+        PLUGIN_FULL="$GITHUB_WORKSPACE/moodle/$resolved_plugin_path"
+        EXTRA=""
+        if [ "$FAIL_ON_EMPTY" = "true" ]; then
+          EXTRA="--fail-on-empty-test-suite"
+        fi
+        if [ -f "$PLUGIN_FULL/phpunit.xml" ]; then
+          echo "Running phpunit on ${component} with plugin phpunit.xml"
+          "$PHPUNIT" -c "$PLUGIN_FULL/phpunit.xml" --testdox --colors $EXTRA $ADDITIONAL_STUFF
+        else
+          echo "Running phpunit on ${component} with testsuite from Moodle phpunit.xml"
+          "$PHPUNIT" -c "$GITHUB_WORKSPACE/moodle/phpunit.xml" --testsuite "${component}_testsuite" --testdox --colors $EXTRA $ADDITIONAL_STUFF
+        fi

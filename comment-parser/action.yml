@@ -1,0 +1,90 @@
+name: Comment parser
+description: 'Resolve PR/comment command metadata for Moodle CI'
+
+outputs:
+  is_behat_comment:
+    description: 'Whether the event requested Behat with #behat'
+    value: ${{ steps.parse.outputs.is_behat_comment }}
+  is_stable_push:
+    description: 'Whether the event is a push to main, master, or MOODLE_*_STABLE'
+    value: ${{ steps.parse.outputs.is_stable_push }}
+  pull_request_number:
+    description: 'Pull request number for PR/comment events'
+    value: ${{ steps.parse.outputs.pull_request_number }}
+  pull_request_head_sha:
+    description: 'Pull request head SHA for PR/comment events'
+    value: ${{ steps.parse.outputs.pull_request_head_sha }}
+  behat_tags:
+    description: 'Safe Behat tags requested after #behat'
+    value: ${{ steps.parse.outputs.behat_tags }}
+  behat_tag_arguments:
+    description: 'Behat --tags argument built from requested tags'
+    value: ${{ steps.parse.outputs.behat_tag_arguments }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Parse CI command context
+      id: parse
+      uses: actions/github-script@v8
+      with:
+        script: |
+          const commentBody = context.eventName === 'pull_request_review'
+            ? context.payload.review?.body
+            : context.payload.comment?.body;
+          const isMoodleCiHelperComment = String(commentBody || '').includes('<!-- moodle-test-action:commands -->');
+          const isPullRequestComment = Boolean(
+            context.payload.pull_request ||
+            context.payload.issue?.pull_request
+          );
+          const isBehatComment = !isMoodleCiHelperComment && isPullRequestComment &&
+            String(commentBody || '').toLowerCase().includes('#behat');
+
+          const extractBehatTags = body => {
+            const text = String(body || '');
+            const marker = text.toLowerCase().indexOf('#behat');
+            if (marker === -1) {
+              return [];
+            }
+
+            const afterMarker = text.slice(marker + '#behat'.length);
+            const tags = [];
+            for (const match of afterMarker.matchAll(/(^|\s)(@[A-Za-z0-9_-]+)/g)) {
+              tags.push(match[2]);
+            }
+            return [...new Set(tags)];
+          };
+
+          const behatTags = isBehatComment ? extractBehatTags(commentBody) : [];
+          const behatTagArguments = behatTags.length > 0 ? `--tags=${behatTags.join('||')}` : '';
+          const pullRequestNumber = context.payload.pull_request?.number ||
+            (context.payload.issue?.pull_request ? context.payload.issue.number : '') ||
+            context.payload.review?.pull_request_url?.split('/').pop() ||
+            '';
+          let pullRequestHeadSha = context.payload.pull_request?.head?.sha || '';
+
+          if (pullRequestNumber && !pullRequestHeadSha) {
+            const { owner, repo } = context.repo;
+            const response = await github.rest.pulls.get({
+              owner,
+              repo,
+              pull_number: Number(pullRequestNumber),
+            });
+            pullRequestHeadSha = response.data.head.sha;
+          }
+
+          const pushBranch = context.eventName === 'push' && context.ref?.startsWith('refs/heads/')
+            ? context.ref.replace('refs/heads/', '')
+            : '';
+          const isStablePush = Boolean(pushBranch) && (
+            pushBranch === 'main' ||
+            pushBranch === 'master' ||
+            /^MOODLE_.*_STABLE$/.test(pushBranch)
+          );
+
+          core.setOutput('is_behat_comment', String(isBehatComment));
+          core.setOutput('is_stable_push', String(isStablePush));
+          core.setOutput('pull_request_number', String(pullRequestNumber));
+          core.setOutput('pull_request_head_sha', pullRequestHeadSha);
+          core.setOutput('behat_tags', behatTags.join(' '));
+          core.setOutput('behat_tag_arguments', behatTagArguments);

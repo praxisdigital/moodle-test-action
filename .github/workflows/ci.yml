@@ -1,0 +1,594 @@
+name: Moodle plugin CI
+
+on:
+  workflow_call:
+    inputs:
+      run_phpunit:
+        description: 'Run PHPUnit tests'
+        required: false
+        type: string
+        default: 'true'
+      run_behat:
+        description: 'Run Behat tests when feature files are present'
+        required: false
+        type: string
+        default: 'true'
+      behat_on_pull_request:
+        description: 'Run Behat automatically on pull_request events instead of only on #behat comments, workflow_dispatch, or stable branch pushes'
+        required: false
+        type: string
+        default: 'false'
+      plugin_component:
+        description: 'Moodle plugin component name'
+        required: false
+        type: string
+        default: ''
+      plugin_path:
+        description: 'Moodle plugin install path'
+        required: false
+        type: string
+        default: ''
+      php_versions:
+        description: 'JSON array of PHP versions for PHPUnit matrix'
+        required: false
+        type: string
+        default: ''
+      moodle_versions:
+        description: 'JSON array of Moodle refs for PHPUnit matrix'
+        required: false
+        type: string
+        default: ''
+      moodle_repositories:
+        description: 'JSON array of Moodle repositories for PHPUnit matrix'
+        required: false
+        type: string
+        default: ''
+      os:
+        description: 'JSON array of runner labels for PHPUnit matrix'
+        required: false
+        type: string
+        default: ''
+      db_types:
+        description: 'JSON array of database types for PHPUnit matrix'
+        required: false
+        type: string
+        default: ''
+      experimental:
+        description: 'JSON array of experimental flags for PHPUnit matrix'
+        required: false
+        type: string
+        default: ''
+      exclude_matrix:
+        description: 'JSON array of matrix exclusions'
+        required: false
+        type: string
+        default: ''
+      dependencies:
+        description: 'JSON array of plugin dependencies in org/repo@ref format'
+        required: false
+        type: string
+        default: ''
+      org:
+        description: 'GitHub organization used for private dependency detection'
+        required: false
+        type: string
+        default: ''
+      additional_phpunit_arguments:
+        description: 'Additional arguments to pass to PHPUnit'
+        required: false
+        type: string
+        default: ''
+      fail_on_empty_test_suite:
+        description: 'Fail the job if PHPUnit executes no tests'
+        required: false
+        type: string
+        default: 'true'
+      additional_behat_arguments:
+        description: 'Additional arguments to pass to Behat'
+        required: false
+        type: string
+        default: ''
+      behat_increase_timeout:
+        description: 'Multiplier for Moodle Behat timeouts; use 0 to disable'
+        required: false
+        type: string
+        default: '2'
+      behat_step_timeout_minutes:
+        description: 'Maximum minutes allowed for the Behat runner step'
+        required: false
+        type: string
+        default: '15'
+      post_no_tests_comment:
+        description: 'Post a PR comment when Behat is requested but no Behat feature files exist'
+        required: false
+        type: string
+        default: ''
+      post_commands_comment:
+        description: 'Post a PR comment on newly opened pull requests explaining available CI commands'
+        required: false
+        type: string
+        default: 'true'
+      pull_request_number:
+        description: 'Optional pull request number to test'
+        required: false
+        type: string
+        default: ''
+      action_ref:
+        description: 'moodle-test-action ref used for local subactions'
+        required: false
+        type: string
+        default: 'master'
+    secrets:
+      MOODLE_GH_KEY:
+        description: 'Optional token for private Moodle/plugin dependency repositories'
+        required: false
+      MOODLE_CI_APP_ID:
+        description: 'Optional GitHub App ID used for PR comments and commit statuses when GITHUB_TOKEN is restricted'
+        required: false
+      MOODLE_CI_APP_PRIVATE_KEY:
+        description: 'Optional GitHub App private key used for PR comments and commit statuses when GITHUB_TOKEN is restricted'
+        required: false
+permissions:
+  contents: read
+  pull-requests: read
+  issues: write
+  statuses: write
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    env:
+      MOODLE_CI_APP_ID_VALUE: ${{ secrets.MOODLE_CI_APP_ID || vars.MOODLE_CI_APP_ID }}
+      HAS_GITHUB_APP_PRIVATE_KEY: ${{ secrets.MOODLE_CI_APP_PRIVATE_KEY != '' }}
+    outputs:
+      should_run: ${{ steps.config.outputs.should_run }}
+      skip_reason: ${{ steps.config.outputs.skip_reason }}
+      is_behat_comment: ${{ steps.command.outputs.is_behat_comment }}
+      is_stable_push: ${{ steps.command.outputs.is_stable_push }}
+      pull_request_number: ${{ steps.command.outputs.pull_request_number }}
+      pull_request_head_sha: ${{ steps.command.outputs.pull_request_head_sha }}
+      behat_tags: ${{ steps.command.outputs.behat_tags }}
+      behat_tag_arguments: ${{ steps.command.outputs.behat_tag_arguments }}
+      php_versions: ${{ steps.config.outputs.php_versions }}
+      moodle_versions: ${{ steps.config.outputs.moodle_versions }}
+      moodle_repositories: ${{ steps.config.outputs.moodle_repositories }}
+      os: ${{ steps.config.outputs.os }}
+      db_types: ${{ steps.config.outputs.db_types }}
+      experimental: ${{ steps.config.outputs.experimental }}
+      exclude_matrix: ${{ steps.config.outputs.exclude_matrix }}
+      dependencies: ${{ steps.config.outputs.dependencies }}
+      test_matrix: ${{ steps.matrix.outputs.test_matrix }}
+      has_tests: ${{ steps.matrix.outputs.has_tests }}
+    steps:
+      - name: Validate GitHub App configuration
+        id: app-config
+        if: ${{ inputs.post_commands_comment == 'true' && github.event_name == 'pull_request' && github.event.action == 'opened' }}
+        shell: bash
+        run: |
+          if [ -z "$MOODLE_CI_APP_ID_VALUE" ] && [ "$HAS_GITHUB_APP_PRIVATE_KEY" != "true" ]; then
+            echo "has_app=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ -z "$MOODLE_CI_APP_ID_VALUE" ] || [ "$HAS_GITHUB_APP_PRIVATE_KEY" != "true" ]; then
+            echo "::warning::Both MOODLE_CI_APP_ID and MOODLE_CI_APP_PRIVATE_KEY are required to use the GitHub App token. Falling back to GITHUB_TOKEN."
+            echo "has_app=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if ! [[ "$MOODLE_CI_APP_ID_VALUE" =~ ^[0-9]+$ ]]; then
+            echo "::error::MOODLE_CI_APP_ID must be the numeric GitHub App ID, not the Client ID, app name, or installation ID."
+            exit 1
+          fi
+
+          echo "has_app=true" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub App token
+        id: app-token
+        if: ${{ steps.app-config.outputs.has_app == 'true' }}
+        uses: actions/create-github-app-token@v2
+        continue-on-error: true
+        with:
+          app-id: ${{ env.MOODLE_CI_APP_ID_VALUE }}
+          private-key: ${{ secrets.MOODLE_CI_APP_PRIVATE_KEY }}
+          permission-contents: read
+          permission-issues: write
+          permission-pull-requests: write
+          permission-statuses: write
+
+      - name: Warn about GitHub App token failure
+        if: ${{ steps.app-config.outputs.has_app == 'true' && steps.app-token.outcome == 'failure' }}
+        shell: bash
+        run: |
+          echo "::warning::Could not create GitHub App token; falling back to GITHUB_TOKEN."
+
+      - name: Warn about GitHub App private key variable
+        if: ${{ inputs.post_commands_comment == 'true' && github.event_name == 'pull_request' && github.event.action == 'opened' && steps.app-config.outputs.has_app != 'true' && vars.MOODLE_CI_APP_PRIVATE_KEY != '' }}
+        shell: bash
+        run: |
+          echo "::warning::MOODLE_CI_APP_PRIVATE_KEY must be configured as an Actions secret, not an Actions variable."
+
+      - name: Check out moodle-test-action subactions
+        uses: actions/checkout@v6
+        with:
+          repository: praxisdigital/moodle-test-action
+          ref: ${{ inputs.action_ref }}
+          path: .moodle-test-action
+          persist-credentials: false
+
+      - name: Resolve CI configuration
+        id: config
+        uses: actions/github-script@v8
+        env:
+          PHP_VERSIONS: ${{ inputs.php_versions || vars.MOODLE_SUPPORTED_PHP_VERSIONS || '' }}
+          MOODLE_VERSIONS: ${{ inputs.moodle_versions || vars.MOODLE_SUPPORTED_VERSIONS || '' }}
+          MOODLE_REPOSITORIES: ${{ inputs.moodle_repositories || vars.MOODLE_REPOS || '' }}
+          OS: ${{ inputs.os || vars.MOODLE_OS || '' }}
+          DB_TYPES: ${{ inputs.db_types || vars.MOODLE_DB_TYPES || '' }}
+          EXPERIMENTAL: ${{ inputs.experimental || vars.MOODLE_EXPERIMENTAL || '' }}
+          EXCLUDE_MATRIX: ${{ inputs.exclude_matrix || vars.MOODLE_EXCLUDE_MATRIX || '' }}
+          DEPENDENCIES: ${{ inputs.dependencies || vars.MOODLE_PLUGIN_DEPENDENCIES || '' }}
+        with:
+          script: |
+            const parseArray = (name, value, fallback) => {
+              const raw = String(value || '').trim();
+              if (!raw) {
+                return fallback;
+              }
+
+              try {
+                const parsed = JSON.parse(raw);
+                if (Array.isArray(parsed) && parsed.length > 0) {
+                  return parsed;
+                }
+                core.warning(`${name} must be a non-empty JSON array. Falling back to ${JSON.stringify(fallback)}.`);
+              } catch (error) {
+                core.warning(`${name} is not valid JSON: ${error.message}. Falling back to ${JSON.stringify(fallback)}.`);
+              }
+              return fallback;
+            };
+
+            const parseOptionalArray = (name, value) => {
+              const raw = String(value || '').trim();
+              if (!raw) {
+                return [];
+              }
+
+              try {
+                const parsed = JSON.parse(raw);
+                if (Array.isArray(parsed)) {
+                  return parsed;
+                }
+                core.warning(`${name} must be a JSON array. Falling back to [].`);
+              } catch (error) {
+                core.warning(`${name} is not valid JSON: ${error.message}. Falling back to [].`);
+              }
+              return [];
+            };
+
+            const normalizeExcludeMatrix = value => parseOptionalArray('MOODLE_EXCLUDE_MATRIX', value).map(entry => {
+              if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+                return entry;
+              }
+
+              const normalized = { ...entry };
+              if (Object.prototype.hasOwnProperty.call(normalized, 'moodle_repos') && !Object.prototype.hasOwnProperty.call(normalized, 'moodle_repository')) {
+                normalized.moodle_repository = normalized.moodle_repos;
+                delete normalized.moodle_repos;
+              }
+              return normalized;
+            });
+
+            const parseDependencies = value => {
+              const raw = String(value || '').trim();
+              if (!raw) {
+                return [];
+              }
+
+              const normalize = dependencies => [...new Set(dependencies.map(dep => String(dep).trim()).filter(Boolean))];
+
+              try {
+                const parsed = JSON.parse(raw);
+                if (Array.isArray(parsed)) {
+                  return normalize(parsed);
+                }
+                core.warning('MOODLE_PLUGIN_DEPENDENCIES must be a JSON array or whitespace-separated org/repo@ref list. Treating it as empty.');
+                return [];
+              } catch (_) {
+                const matches = raw.match(/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+@[^\s"',\]]+/g);
+                if (matches) {
+                  return normalize(matches);
+                }
+                return [];
+              }
+            };
+
+            const resolved = {
+              php_versions: parseArray('MOODLE_SUPPORTED_PHP_VERSIONS', process.env.PHP_VERSIONS, ['8.4']),
+              moodle_versions: parseArray('MOODLE_SUPPORTED_VERSIONS', process.env.MOODLE_VERSIONS, ['MOODLE_502_STABLE']),
+              moodle_repositories: parseArray('MOODLE_REPOS', process.env.MOODLE_REPOSITORIES, ['moodle/moodle']),
+              os: parseArray('MOODLE_OS', process.env.OS, ['ubuntu-latest']),
+              db_types: parseArray('MOODLE_DB_TYPES', process.env.DB_TYPES, ['mysqli']),
+              experimental: parseArray('MOODLE_EXPERIMENTAL', process.env.EXPERIMENTAL, [false]),
+              exclude_matrix: normalizeExcludeMatrix(process.env.EXCLUDE_MATRIX),
+              dependencies: parseDependencies(process.env.DEPENDENCIES),
+            };
+
+            let shouldRun = true;
+            let skipReason = '';
+
+            if (context.eventName === 'push' && context.ref?.startsWith('refs/heads/')) {
+              const branch = context.ref.replace('refs/heads/', '');
+              const { owner, repo } = context.repo;
+              const pulls = await github.paginate(github.rest.pulls.list, {
+                owner,
+                repo,
+                state: 'open',
+                head: `${owner}:${branch}`,
+                per_page: 100,
+              });
+
+              if (pulls.length > 0) {
+                shouldRun = false;
+                skipReason = `Skipping push run because branch ${branch} already has open pull request #${pulls[0].number}.`;
+                core.notice(skipReason);
+              }
+            }
+
+            core.info(`Resolved ${resolved.php_versions.length} PHP version(s), ${resolved.moodle_versions.length} Moodle ref(s), ${resolved.moodle_repositories.length} Moodle repository value(s), ${resolved.db_types.length} database type(s).`);
+
+            core.setOutput('should_run', String(shouldRun));
+            core.setOutput('skip_reason', skipReason);
+            core.setOutput('php_versions', JSON.stringify(resolved.php_versions));
+            core.setOutput('moodle_versions', JSON.stringify(resolved.moodle_versions));
+            core.setOutput('moodle_repositories', JSON.stringify(resolved.moodle_repositories));
+            core.setOutput('os', JSON.stringify(resolved.os));
+            core.setOutput('db_types', JSON.stringify(resolved.db_types));
+            core.setOutput('experimental', JSON.stringify(resolved.experimental));
+            core.setOutput('exclude_matrix', JSON.stringify(resolved.exclude_matrix));
+            core.setOutput('dependencies', resolved.dependencies.join(' '));
+
+      - name: Parse comment command
+        id: command
+        uses: ./.moodle-test-action/comment-parser
+
+      - name: Comment available CI commands
+        if: ${{ inputs.post_commands_comment == 'true' && github.event_name == 'pull_request' && github.event.action == 'opened' }}
+        uses: actions/github-script@v8
+        continue-on-error: true
+        env:
+          TOKEN_SOURCE: ${{ steps.app-token.outputs.token != '' && 'github-app' || 'github-token' }}
+        with:
+          github-token: ${{ steps.app-token.outputs.token || github.token }}
+          script: |
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            const marker = '<!-- moodle-test-action:commands -->';
+            const body = [
+              marker,
+              'Available CI commands: <code>#<!-- -->behat</code>, optionally with one or more tags, for example <code>#<!-- -->behat @javascript @block_example</code>.',
+            ].join('\n');
+
+            try {
+              const comments = await github.paginate(github.rest.issues.listComments, {
+                owner,
+                repo,
+                issue_number,
+                per_page: 100,
+              });
+              const existing = comments.find(comment => comment.body?.includes(marker));
+
+              if (existing) {
+                await github.rest.issues.updateComment({
+                  owner,
+                  repo,
+                  comment_id: existing.id,
+                  body,
+                });
+              } else {
+                await github.rest.issues.createComment({
+                  owner,
+                  repo,
+                  issue_number,
+                  body,
+                });
+              }
+            } catch (error) {
+              if (error.status === 403) {
+                core.warning(`Could not post Moodle CI command helper comment using ${process.env.TOKEN_SOURCE}; continuing without it.`);
+              } else {
+                throw error;
+              }
+            }
+
+      - name: Build test matrix
+        id: matrix
+        uses: actions/github-script@v8
+        env:
+          PHP_VERSIONS: ${{ steps.config.outputs.php_versions }}
+          MOODLE_VERSIONS: ${{ steps.config.outputs.moodle_versions }}
+          MOODLE_REPOSITORIES: ${{ steps.config.outputs.moodle_repositories }}
+          OS: ${{ steps.config.outputs.os }}
+          DB_TYPES: ${{ steps.config.outputs.db_types }}
+          EXPERIMENTAL: ${{ steps.config.outputs.experimental }}
+          EXCLUDE_MATRIX: ${{ steps.config.outputs.exclude_matrix }}
+          DEPENDENCIES: ${{ steps.config.outputs.dependencies }}
+          RUN_PHPUNIT: ${{ inputs.run_phpunit }}
+          RUN_BEHAT: ${{ inputs.run_behat }}
+          BEHAT_ON_PULL_REQUEST: ${{ inputs.behat_on_pull_request }}
+          IS_STABLE_PUSH: ${{ steps.command.outputs.is_stable_push }}
+          IS_BEHAT_COMMENT: ${{ steps.command.outputs.is_behat_comment }}
+        with:
+          script: |
+            const parse = value => JSON.parse(value || '[]');
+            const phpVersions = parse(process.env.PHP_VERSIONS);
+            const moodleVersions = parse(process.env.MOODLE_VERSIONS);
+            const moodleRepositories = parse(process.env.MOODLE_REPOSITORIES);
+            const osList = parse(process.env.OS);
+            const dbTypes = parse(process.env.DB_TYPES);
+            const experimentalValues = parse(process.env.EXPERIMENTAL);
+            const excludes = parse(process.env.EXCLUDE_MATRIX);
+            const dependencies = process.env.DEPENDENCIES || '';
+
+            const eventName = context.eventName;
+            const runPhpunit = process.env.RUN_PHPUNIT === 'true' && ['pull_request', 'push', 'workflow_dispatch'].includes(eventName);
+            const runBehat = process.env.RUN_BEHAT === 'true' && (
+              eventName === 'workflow_dispatch' ||
+              process.env.IS_STABLE_PUSH === 'true' ||
+              (eventName === 'pull_request' && process.env.BEHAT_ON_PULL_REQUEST === 'true') ||
+              process.env.IS_BEHAT_COMMENT === 'true'
+            );
+
+            const matchesExclude = row => excludes.some(exclude => Object.entries(exclude).every(([key, value]) => row[key] === value));
+            const rows = [];
+            const addSuiteRows = suite => {
+              for (const php of phpVersions) {
+                for (const moodle of moodleVersions) {
+                  for (const moodle_repository of moodleRepositories) {
+                    for (const os of osList) {
+                      for (const dbtype of dbTypes) {
+                        if (suite === 'behat' && !['mysqli', 'pgsql'].includes(dbtype)) {
+                          continue;
+                        }
+                        for (const experimental of experimentalValues) {
+                          const row = { suite, php, moodle, moodle_repository, os, dbtype, experimental, dependencies };
+                          if (!matchesExclude(row)) {
+                            rows.push(row);
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            };
+
+            if (runPhpunit) {
+              addSuiteRows('phpunit');
+            }
+            if (runBehat) {
+              addSuiteRows('behat');
+            }
+
+            core.info(`Generated ${rows.length} test matrix row(s).`);
+            core.setOutput('has_tests', String(rows.length > 0));
+            core.setOutput('test_matrix', JSON.stringify({ include: rows }));
+
+  test:
+    needs: setup
+    if: ${{ needs.setup.outputs.should_run == 'true' && needs.setup.outputs.has_tests == 'true' }}
+    name: ${{ matrix.suite }} (${{ matrix.php }}, ${{ matrix.moodle }}, ${{ matrix.moodle_repository }}, ${{ matrix.os }}, ${{ matrix.dbtype }})
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.experimental }}
+    env:
+      MOODLE_CI_APP_ID_VALUE: ${{ secrets.MOODLE_CI_APP_ID || vars.MOODLE_CI_APP_ID }}
+      HAS_GITHUB_APP_PRIVATE_KEY: ${{ secrets.MOODLE_CI_APP_PRIVATE_KEY != '' }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.setup.outputs.test_matrix) }}
+
+    steps:
+      - name: Validate GitHub App configuration
+        id: app-config
+        if: ${{ matrix.suite == 'behat' && needs.setup.outputs.is_behat_comment == 'true' && needs.setup.outputs.pull_request_head_sha != '' }}
+        shell: bash
+        run: |
+          if [ -z "$MOODLE_CI_APP_ID_VALUE" ] && [ "$HAS_GITHUB_APP_PRIVATE_KEY" != "true" ]; then
+            echo "has_app=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ -z "$MOODLE_CI_APP_ID_VALUE" ] || [ "$HAS_GITHUB_APP_PRIVATE_KEY" != "true" ]; then
+            echo "::warning::Both MOODLE_CI_APP_ID and MOODLE_CI_APP_PRIVATE_KEY are required to use the GitHub App token. Falling back to GITHUB_TOKEN."
+            echo "has_app=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if ! [[ "$MOODLE_CI_APP_ID_VALUE" =~ ^[0-9]+$ ]]; then
+            echo "::error::MOODLE_CI_APP_ID must be the numeric GitHub App ID, not the Client ID, app name, or installation ID."
+            exit 1
+          fi
+
+          echo "has_app=true" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub App token
+        id: app-token
+        if: ${{ steps.app-config.outputs.has_app == 'true' }}
+        uses: actions/create-github-app-token@v2
+        continue-on-error: true
+        with:
+          app-id: ${{ env.MOODLE_CI_APP_ID_VALUE }}
+          private-key: ${{ secrets.MOODLE_CI_APP_PRIVATE_KEY }}
+          permission-contents: read
+          permission-issues: write
+          permission-pull-requests: write
+          permission-statuses: write
+
+      - name: Warn about GitHub App token failure
+        if: ${{ steps.app-config.outputs.has_app == 'true' && steps.app-token.outcome == 'failure' }}
+        shell: bash
+        run: |
+          echo "::warning::Could not create GitHub App token; falling back to GITHUB_TOKEN."
+
+      - name: Check out moodle-test-action subactions
+        uses: actions/checkout@v6
+        with:
+          repository: praxisdigital/moodle-test-action
+          ref: ${{ inputs.action_ref }}
+          path: .moodle-test-action
+          persist-credentials: false
+
+      - name: Run Behat tests when requested
+        if: ${{ matrix.suite == 'behat' }}
+        uses: ./.moodle-test-action/behat-test
+        with:
+          pull_request_number: ${{ inputs.pull_request_number || needs.setup.outputs.pull_request_number }}
+          moodle: ${{ matrix.moodle }}
+          php: ${{ matrix.php }}
+          dbtype: ${{ matrix.dbtype }}
+          moodle_repository: ${{ matrix.moodle_repository }}
+          dependencies: ${{ matrix.dependencies }}
+          additional_behat_arguments: ${{ format('{0} {1}', inputs.additional_behat_arguments || vars.MOODLE_ADDITIONAL_BEHAT_ARGUMENTS || '', needs.setup.outputs.behat_tag_arguments) }}
+          behat_increase_timeout: ${{ inputs.behat_increase_timeout }}
+          behat_step_timeout_minutes: ${{ inputs.behat_step_timeout_minutes }}
+          post_no_tests_comment: ${{ inputs.post_no_tests_comment || (needs.setup.outputs.is_behat_comment == 'true' && 'true' || 'false') }}
+          PRIVATE_REPO_TOKEN: ${{ secrets.MOODLE_GH_KEY }}
+          status_token: ${{ steps.app-token.outputs.token || github.token }}
+          status_sha: ${{ needs.setup.outputs.is_behat_comment == 'true' && needs.setup.outputs.pull_request_head_sha || '' }}
+          status_context: ${{ needs.setup.outputs.is_behat_comment == 'true' && format('Moodle CI / behat on demand ({0}, {1}, {2}, {3})', matrix.php, matrix.moodle, matrix.moodle_repository, matrix.dbtype) || '' }}
+          status_tags: ${{ needs.setup.outputs.behat_tags }}
+
+      - name: Resolve plugin checkout ref
+        if: ${{ matrix.suite == 'phpunit' }}
+        id: checkout_ref
+        uses: actions/github-script@v8
+        with:
+          script: |
+            if (context.eventName === 'pull_request') {
+              core.setOutput('ref', `refs/pull/${context.payload.pull_request.number}/merge`);
+              return;
+            }
+            if (context.eventName === 'issue_comment') {
+              core.setOutput('ref', `refs/pull/${context.payload.issue.number}/merge`);
+              return;
+            }
+            core.setOutput('ref', context.ref);
+
+      - name: Run PHPUnit tests
+        if: ${{ matrix.suite == 'phpunit' }}
+        uses: ./.moodle-test-action/phpunit-test
+        with:
+          plugin: ${{ inputs.plugin_component || vars.MOODLE_PLUGIN_COMPONENT || '' }}
+          plugin-path: ${{ inputs.plugin_path || vars.MOODLE_PLUGIN_PATH || '' }}
+          php: ${{ matrix.php }}
+          moodle: ${{ matrix.moodle }}
+          moodle_repository: ${{ matrix.moodle_repository }}
+          os: ${{ matrix.os }}
+          additional_phpunit_arguments: ${{ inputs.additional_phpunit_arguments || vars.MOODLE_ADDITIONAL_PHPUNIT_ARGUMENTS || '' }}
+          org: ${{ inputs.org || vars.MOODLE_ORG || 'praxisdigital' }}
+          dependencies: ${{ matrix.dependencies }}
+          dbtype: ${{ matrix.dbtype }}
+          experimental: ${{ matrix.experimental }}
+          PRIVATE_REPO_TOKEN: ${{ secrets.MOODLE_GH_KEY }}
+          fail_on_empty_test_suite: ${{ inputs.fail_on_empty_test_suite }}
+          checkout_ref: ${{ steps.checkout_ref.outputs.ref }}

@@ -22,10 +22,6 @@ on:
       - MOODLE_*_STABLE
   issue_comment:
     types: [created]
-  pull_request_review_comment:
-    types: [created]
-  pull_request_review:
-    types: [submitted]
   workflow_dispatch:
 
 permissions:

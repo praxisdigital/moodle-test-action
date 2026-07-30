@@ -97,7 +97,7 @@ on:
         description: 'Maximum minutes allowed for the Behat runner step'
         required: false
         type: string
-        default: '15'
+        default: '45'
       post_no_tests_comment:
         description: 'Post a PR comment when Behat is requested but no Behat feature files exist'
         required: false

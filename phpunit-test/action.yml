@@ -49,7 +49,7 @@ inputs:
     required: false
     default: 'false'
   PRIVATE_REPO_TOKEN:
-    description: 'Optional token for private repositories'
+    description: 'Optional GitHub App installation token (or other token) for private Moodle/dependency repositories'
     required: false
     default: ''
   fail_on_empty_test_suite:
@@ -141,13 +141,78 @@ runs:
         php -m | grep -q 'sqlsrv' && echo "sqlsrv extension installed"
         php -m | grep -q 'pdo_sqlsrv' && echo "pdo_sqlsrv extension installed"
 
+    - name: Resolve Moodle checkout auth
+      id: moodle-auth
+      shell: bash
+      env:
+        MOODLE_REPOSITORY: ${{ inputs.moodle_repository }}
+        PRIVATE_REPO_TOKEN: ${{ inputs.PRIVATE_REPO_TOKEN }}
+      run: |
+        moodle_owner="${MOODLE_REPOSITORY%%/*}"
+        if [ "$moodle_owner" = "moodle" ]; then
+          echo "is_public=true" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        if [ -z "$PRIVATE_REPO_TOKEN" ]; then
+          echo "::error::Private Moodle repository ${MOODLE_REPOSITORY} requires PRIVATE_REPO_TOKEN (GitHub App installation token with Contents: Read)."
+          exit 1
+        fi
+
+        echo "is_public=false" >> "$GITHUB_OUTPUT"
+
+    - name: Preflight private Moodle access
+      if: ${{ steps.moodle-auth.outputs.is_public != 'true' }}
+      shell: bash
+      env:
+        PRIVATE_REPO_TOKEN: ${{ inputs.PRIVATE_REPO_TOKEN }}
+        MOODLE_REPOSITORY: ${{ inputs.moodle_repository }}
+        MOODLE_REF: ${{ inputs.moodle }}
+      run: |
+        set -euo pipefail
+        api() {
+          local path="$1"
+          curl -sS -o /tmp/moodle-api.json -w "%{http_code}" \
+            -H "Authorization: Bearer ${PRIVATE_REPO_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com${path}"
+        }
+
+        code="$(api "/repos/${MOODLE_REPOSITORY}")"
+        if [ "$code" = "404" ] || [ "$code" = "403" ]; then
+          echo "::error::Cannot access ${MOODLE_REPOSITORY} (HTTP ${code}). Grant the GitHub App Contents: Read on this repository (include it in the App installation)."
+          exit 1
+        fi
+        if [ "$code" != "200" ]; then
+          echo "::error::GitHub API lookup for ${MOODLE_REPOSITORY} failed (HTTP ${code})."
+          cat /tmp/moodle-api.json || true
+          exit 1
+        fi
+
+        for path in \
+          "/repos/${MOODLE_REPOSITORY}/git/ref/heads/${MOODLE_REF}" \
+          "/repos/${MOODLE_REPOSITORY}/git/ref/tags/${MOODLE_REF}" \
+          "/repos/${MOODLE_REPOSITORY}/commits/${MOODLE_REF}"
+        do
+          code="$(api "$path")"
+          if [ "$code" = "200" ]; then
+            echo "Verified ${MOODLE_REPOSITORY}@${MOODLE_REF} is reachable with the private checkout token."
+            exit 0
+          fi
+        done
+
+        echo "::error::Ref ${MOODLE_REF} was not found on ${MOODLE_REPOSITORY} (checked branch, tag, and commit). Confirm the Moodle version exists on that repository."
+        exit 1
+
     - name: Checking out code from ${{ inputs.moodle_repository }}
       uses: actions/checkout@v6
       with:
         repository: ${{ inputs.moodle_repository }}
         ref: ${{ inputs.moodle }}
         path: ${{ github.workspace }}/moodle
-        token: ${{ inputs.PRIVATE_REPO_TOKEN || github.token }}
+        token: ${{ steps.moodle-auth.outputs.is_public == 'true' && github.token || inputs.PRIVATE_REPO_TOKEN }}
+        persist-credentials: false
 
     - name: Setting up Moodle dataroot & config
       shell: bash
@@ -266,7 +331,6 @@ runs:
       shell: bash
       env:
         DEPENDENCIES: ${{ inputs.dependencies }}
-        ORG: ${{ inputs.org }}
         PRIVATE_REPO_TOKEN: ${{ inputs.PRIVATE_REPO_TOKEN }}
       run: |
         # dependencies are in the format of org/repo@ref
@@ -280,10 +344,9 @@ runs:
           ref=$(echo $dep | cut -d@ -f2)
           url="https://github.com/${repo}.git"
 
-          # Convert to correct URL if private repo
-          if [[ $repo == "$ORG"/* && -n "$PRIVATE_REPO_TOKEN" ]]; then
-            printf "Checking out ${repo}@${ref} from github.com\n"
-            url="https://oauth2:${PRIVATE_REPO_TOKEN}@github.com/${repo}.git"
+          if [ -n "$PRIVATE_REPO_TOKEN" ]; then
+            printf "Checking out ${repo}@${ref} from github.com (authenticated)\n"
+            url="https://x-access-token:${PRIVATE_REPO_TOKEN}@github.com/${repo}.git"
           else
             printf "Checking out (public) ${repo}@${ref} from github.com\n"
           fi
@@ -292,7 +355,7 @@ runs:
           echo "Auto determining component name for repo: $repo ..."
           tmpdir=$GITHUB_WORKSPACE/tmp
           mkdir -p $tmpdir
-          git clone --quiet $url $tmpdir/$repo
+          git clone --quiet "$url" "$tmpdir/$repo"
           component=$(sed -En 's/^[[:space:]]*\$plugin->component[[:space:]]*=[[:space:]]*["'"'"']([^"'"'"']+)["'"'"'][[:space:]]*;.*/\1/p' $tmpdir/$repo/version.php)
           rm -rf $tmpdir/$repo
           echo "Auto determined component name: $component"
@@ -302,9 +365,9 @@ runs:
           path=$(php -r "CONST CLI_SCRIPT = true; require_once '$GITHUB_WORKSPACE/moodle/config.php'; if (file_exists('$GITHUB_WORKSPACE/moodle/public/lib/classes/component.php')) { require_once '$GITHUB_WORKSPACE/moodle/public/lib/classes/component.php'; } else { require_once '$GITHUB_WORKSPACE/moodle/lib/classes/component.php'; } class_exists('core\\component') === false && class_alias('core_component', '\\core\\component'); use core\\component; [\$plugin_type, \$name] = component::normalize_component('$component'); \$plugin_types = component::get_plugin_types();echo empty(\$plugin_types[\$plugin_type]) ? '' : \$plugin_types[\$plugin_type] . '/' . \$name;")
           echo "Auto determined path: $path"
 
-          echo "Cloning $repo@$ref using $url to $path ..."
-          git clone $url $path
-          git -C $path checkout $ref
+          echo "Cloning $repo@$ref to $path ..."
+          git clone "$url" "$path"
+          git -C "$path" checkout "$ref"
         done
 
     - name: Setting up PHPUnit

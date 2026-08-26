@@ -92,6 +92,13 @@ If no `tests/behat/*.feature` files exist, the Behat job exits successfully and 
 The root action is a compatibility wrapper. It runs PHPUnit by default and Behat only when `run_behat: 'true'` is set.
 
 ```yaml
+- uses: actions/create-github-app-token@v2
+  id: app-token
+  with:
+    app-id: ${{ secrets.MOODLE_CI_APP_ID }}
+    private-key: ${{ secrets.MOODLE_CI_APP_PRIVATE_KEY }}
+    owner: praxisdigital
+    permission-contents: read
 - uses: praxisdigital/moodle-test-action@master
   with:
     php: '8.4'
@@ -101,12 +108,19 @@ The root action is a compatibility wrapper. It runs PHPUnit by default and Behat
     dependencies: |
       praxisdigital/local_pxsdk@master
     action_ref: 'mma_BehatOnDemand'
-    PRIVATE_REPO_TOKEN: ${{ secrets.MOODLE_GH_KEY }}
+    PRIVATE_REPO_TOKEN: ${{ steps.app-token.outputs.token }}
 ```
 
 ## Modular PHPUnit Usage
 
 ```yaml
+- uses: actions/create-github-app-token@v2
+  id: app-token
+  with:
+    app-id: ${{ secrets.MOODLE_CI_APP_ID }}
+    private-key: ${{ secrets.MOODLE_CI_APP_PRIVATE_KEY }}
+    owner: praxisdigital
+    permission-contents: read
 - uses: praxisdigital/moodle-test-action/phpunit-test@master
   with:
     plugin: 'local_pxsdk'
@@ -117,14 +131,27 @@ The root action is a compatibility wrapper. It runs PHPUnit by default and Behat
     os: 'ubuntu-latest'
     dbtype: 'mysqli'
     dependencies: ${{ vars.MOODLE_PLUGIN_DEPENDENCIES || '' }}
-    PRIVATE_REPO_TOKEN: ${{ secrets.MOODLE_GH_KEY }}
+    PRIVATE_REPO_TOKEN: ${{ steps.app-token.outputs.token }}
 ```
+
+## Private repositories (GitHub App)
+
+The reusable workflow mints an org-scoped GitHub App installation token for private Moodle forks and plugin dependencies. Configure:
+
+| Secret / var | Purpose |
+| --- | --- |
+| `MOODLE_CI_APP_ID` | Numeric GitHub App ID (secret or variable) |
+| `MOODLE_CI_APP_PRIVATE_KEY` | App private key (**secret only**) |
+
+Install the App on the org (`inputs.org` / `MOODLE_ORG` / repository owner) with at least **Contents: Read** on every private dependency (and private Moodle) repo CI must clone. Keep **Issues / Pull requests / Statuses** write if you rely on PR command comments or on-demand Behat statuses.
+
+Caller workflows should use `secrets: inherit` so the reusable workflow receives these credentials. Jobs with private `dependencies` fail fast if the App token cannot be created.
+
+When calling the root or modular actions directly, mint the token in the caller job and pass it as `PRIVATE_REPO_TOKEN`.
 
 ## Notes
 
 - PHPUnit supports `mysqli`, `pgsql`, and `sqlsrv`.
 - Behat supports `mysqli` and `pgsql`.
 - Dependencies use `org/repo@ref` format.
-- Private dependencies need `PRIVATE_REPO_TOKEN` or `MOODLE_GH_KEY` when using the reusable workflow.
 - `issue_comment` workflows must exist on the plugin repository default branch before `#behat` comments can trigger them.
-- If `GITHUB_TOKEN` cannot post comments or statuses, configure `MOODLE_CI_APP_ID` and `MOODLE_CI_APP_PRIVATE_KEY` for a GitHub App token.

@@ -49,7 +49,7 @@ inputs:
     required: false
     default: 'false'
   PRIVATE_REPO_TOKEN:
-    description: 'Optional token for private repositories'
+    description: 'Optional GitHub App installation token (or other token) for private Moodle/dependency repositories'
     required: false
     default: ''
   fail_on_empty_test_suite:
@@ -266,7 +266,6 @@ runs:
       shell: bash
       env:
         DEPENDENCIES: ${{ inputs.dependencies }}
-        ORG: ${{ inputs.org }}
         PRIVATE_REPO_TOKEN: ${{ inputs.PRIVATE_REPO_TOKEN }}
       run: |
         # dependencies are in the format of org/repo@ref
@@ -280,10 +279,9 @@ runs:
           ref=$(echo $dep | cut -d@ -f2)
           url="https://github.com/${repo}.git"
 
-          # Convert to correct URL if private repo
-          if [[ $repo == "$ORG"/* && -n "$PRIVATE_REPO_TOKEN" ]]; then
-            printf "Checking out ${repo}@${ref} from github.com\n"
-            url="https://oauth2:${PRIVATE_REPO_TOKEN}@github.com/${repo}.git"
+          if [ -n "$PRIVATE_REPO_TOKEN" ]; then
+            printf "Checking out ${repo}@${ref} from github.com (authenticated)\n"
+            url="https://x-access-token:${PRIVATE_REPO_TOKEN}@github.com/${repo}.git"
           else
             printf "Checking out (public) ${repo}@${ref} from github.com\n"
           fi
@@ -292,7 +290,7 @@ runs:
           echo "Auto determining component name for repo: $repo ..."
           tmpdir=$GITHUB_WORKSPACE/tmp
           mkdir -p $tmpdir
-          git clone --quiet $url $tmpdir/$repo
+          git clone --quiet "$url" "$tmpdir/$repo"
           component=$(sed -En 's/^[[:space:]]*\$plugin->component[[:space:]]*=[[:space:]]*["'"'"']([^"'"'"']+)["'"'"'][[:space:]]*;.*/\1/p' $tmpdir/$repo/version.php)
           rm -rf $tmpdir/$repo
           echo "Auto determined component name: $component"
@@ -302,9 +300,9 @@ runs:
           path=$(php -r "CONST CLI_SCRIPT = true; require_once '$GITHUB_WORKSPACE/moodle/config.php'; if (file_exists('$GITHUB_WORKSPACE/moodle/public/lib/classes/component.php')) { require_once '$GITHUB_WORKSPACE/moodle/public/lib/classes/component.php'; } else { require_once '$GITHUB_WORKSPACE/moodle/lib/classes/component.php'; } class_exists('core\\component') === false && class_alias('core_component', '\\core\\component'); use core\\component; [\$plugin_type, \$name] = component::normalize_component('$component'); \$plugin_types = component::get_plugin_types();echo empty(\$plugin_types[\$plugin_type]) ? '' : \$plugin_types[\$plugin_type] . '/' . \$name;")
           echo "Auto determined path: $path"
 
-          echo "Cloning $repo@$ref using $url to $path ..."
-          git clone $url $path
-          git -C $path checkout $ref
+          echo "Cloning $repo@$ref to $path ..."
+          git clone "$url" "$path"
+          git -C "$path" checkout "$ref"
         done
 
     - name: Setting up PHPUnit

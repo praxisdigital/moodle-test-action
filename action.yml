@@ -47,7 +47,7 @@ inputs:
     required: false
     default: 'false'
   PRIVATE_REPO_TOKEN:
-    description: 'Token for private repositories'
+    description: 'GitHub App installation token (or other token) for private Moodle/dependency repositories'
     required: false
     default: ''
   fail_on_empty_test_suite:

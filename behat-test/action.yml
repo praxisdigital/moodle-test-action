@@ -43,7 +43,7 @@ inputs:
     required: false
     default: ''
   PRIVATE_REPO_TOKEN:
-    description: 'Optional token for private dependency repositories'
+    description: 'Optional GitHub App installation token (or other token) for private Moodle/dependency repositories'
     required: false
     default: ''
   status_token:

@@ -143,9 +143,14 @@ The reusable workflow mints an org-scoped GitHub App installation token for priv
 | `MOODLE_CI_APP_ID` | Numeric GitHub App ID (secret or variable) |
 | `MOODLE_CI_APP_PRIVATE_KEY` | App private key (**secret only**) |
 
-Install the App on the org (`inputs.org` / `MOODLE_ORG` / repository owner) with at least **Contents: Read** on every private dependency (and private Moodle) repo CI must clone. Keep **Issues / Pull requests / Statuses** write if you rely on PR command comments or on-demand Behat statuses.
+Install the App on the org (`inputs.org` / `MOODLE_ORG` / repository owner) with at least **Contents: Read** on every private dependency and private Moodle fork CI must clone. Keep **Issues / Pull requests / Statuses** write if you rely on PR command comments or on-demand Behat statuses.
 
-Caller workflows should use `secrets: inherit` so the reusable workflow receives these credentials. Jobs with private `dependencies` fail fast if the App token cannot be created.
+| Moodle repository | App token required? |
+| --- | --- |
+| `moodle/moodle` (public) | No — uses `GITHUB_TOKEN` when no App token is present |
+| Same-org private fork (e.g. `praxisdigital/moodle`) | Yes — App must have Contents: Read on that repo |
+
+Caller workflows should use `secrets: inherit` so the reusable workflow receives these credentials. Jobs fail fast if private Moodle or `dependencies` need a token and the App token cannot be created.
 
 When calling the root or modular actions directly, mint the token in the caller job and pass it as `PRIVATE_REPO_TOKEN`.
 

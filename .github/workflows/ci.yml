@@ -528,11 +528,38 @@ jobs:
         run: |
           echo "::warning::Could not create GitHub App token for owner ${PRIVATE_ACCESS_OWNER}."
 
-      - name: Require GitHub App token for private dependencies
-        if: ${{ matrix.dependencies != '' && (steps.app-token.outputs.token == '' || steps.app-token.outputs.token == null) }}
+      - name: Require GitHub App token for private checkout
+        if: ${{ steps.app-token.outputs.token == '' || steps.app-token.outputs.token == null }}
         shell: bash
+        env:
+          DEPENDENCIES: ${{ matrix.dependencies }}
+          MOODLE_REPOSITORY: ${{ matrix.moodle_repository }}
         run: |
-          echo "::error::Plugin dependencies require a GitHub App installation token. Configure MOODLE_CI_APP_ID and MOODLE_CI_APP_PRIVATE_KEY, and install the App on ${PRIVATE_ACCESS_OWNER} with Contents: Read access to private dependency repositories."
+          moodle_owner="${MOODLE_REPOSITORY%%/*}"
+          needs_private_token=false
+          reason=""
+
+          if [ -n "$DEPENDENCIES" ]; then
+            needs_private_token=true
+            reason="plugin dependencies"
+          fi
+
+          # Public moodle/moodle (and other moodle/*) can use GITHUB_TOKEN.
+          # Any other owner (e.g. org private Moodle fork) needs the App token.
+          if [ -n "$moodle_owner" ] && [ "$moodle_owner" != "moodle" ]; then
+            needs_private_token=true
+            if [ -n "$reason" ]; then
+              reason="${reason} and Moodle repository ${MOODLE_REPOSITORY}"
+            else
+              reason="Moodle repository ${MOODLE_REPOSITORY}"
+            fi
+          fi
+
+          if [ "$needs_private_token" != "true" ]; then
+            exit 0
+          fi
+
+          echo "::error::Private checkout (${reason}) requires a GitHub App installation token. Configure MOODLE_CI_APP_ID and MOODLE_CI_APP_PRIVATE_KEY, and install the App on ${PRIVATE_ACCESS_OWNER} with Contents: Read access to private Moodle and dependency repositories."
           exit 1
 
       - name: Check out moodle-test-action subactions

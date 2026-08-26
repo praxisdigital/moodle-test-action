@@ -508,6 +508,49 @@ jobs:
 
           echo "has_app=true" >> "$GITHUB_OUTPUT"
 
+      - name: Resolve GitHub App token repositories
+        id: app-repos
+        if: ${{ steps.app-config.outputs.has_app == 'true' }}
+        shell: bash
+        env:
+          DEPENDENCIES: ${{ matrix.dependencies }}
+          MOODLE_REPOSITORY: ${{ matrix.moodle_repository }}
+          CURRENT_REPOSITORY: ${{ github.repository }}
+        run: |
+          owner="$PRIVATE_ACCESS_OWNER"
+          repos_file="$(mktemp)"
+
+          add_repo() {
+            local full="$1"
+            [ -n "$full" ] || return 0
+            local r_owner="${full%%/*}"
+            local r_name="${full#*/}"
+            if [ "$r_owner" = "$full" ]; then
+              r_name="$full"
+              r_owner="$owner"
+            fi
+            if [ "$r_owner" = "$owner" ] && [ -n "$r_name" ]; then
+              printf '%s\n' "$r_name" >> "$repos_file"
+            fi
+          }
+
+          add_repo "$CURRENT_REPOSITORY"
+          add_repo "$MOODLE_REPOSITORY"
+          for dep in $DEPENDENCIES; do
+            [ -n "$dep" ] || continue
+            add_repo "${dep%@*}"
+          done
+
+          {
+            echo "repositories<<EOF"
+            sort -u "$repos_file"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "GitHub App token will request access to:"
+          sort -u "$repos_file" | sed 's/^/  - /'
+          rm -f "$repos_file"
+
       - name: Create GitHub App token
         id: app-token
         if: ${{ steps.app-config.outputs.has_app == 'true' }}
@@ -517,6 +560,7 @@ jobs:
           app-id: ${{ env.MOODLE_CI_APP_ID_VALUE }}
           private-key: ${{ secrets.MOODLE_CI_APP_PRIVATE_KEY }}
           owner: ${{ env.PRIVATE_ACCESS_OWNER }}
+          repositories: ${{ steps.app-repos.outputs.repositories }}
           permission-contents: read
           permission-issues: write
           permission-pull-requests: write
@@ -525,8 +569,10 @@ jobs:
       - name: Warn about GitHub App token failure
         if: ${{ steps.app-config.outputs.has_app == 'true' && steps.app-token.outcome == 'failure' }}
         shell: bash
+        env:
+          APP_REPOSITORIES: ${{ steps.app-repos.outputs.repositories }}
         run: |
-          echo "::warning::Could not create GitHub App token for owner ${PRIVATE_ACCESS_OWNER}."
+          echo "::warning::Could not create GitHub App token for owner ${PRIVATE_ACCESS_OWNER} with repositories: ${APP_REPOSITORIES//$'\n'/, }. Ensure the App is installed on that org and has Contents: Read on each listed repository."
 
       - name: Require GitHub App token for private checkout
         if: ${{ steps.app-token.outputs.token == '' || steps.app-token.outputs.token == null }}
@@ -534,6 +580,7 @@ jobs:
         env:
           DEPENDENCIES: ${{ matrix.dependencies }}
           MOODLE_REPOSITORY: ${{ matrix.moodle_repository }}
+          APP_REPOSITORIES: ${{ steps.app-repos.outputs.repositories }}
         run: |
           moodle_owner="${MOODLE_REPOSITORY%%/*}"
           needs_private_token=false
@@ -559,7 +606,7 @@ jobs:
             exit 0
           fi
 
-          echo "::error::Private checkout (${reason}) requires a GitHub App installation token. Configure MOODLE_CI_APP_ID and MOODLE_CI_APP_PRIVATE_KEY, and install the App on ${PRIVATE_ACCESS_OWNER} with Contents: Read access to private Moodle and dependency repositories."
+          echo "::error::Private checkout (${reason}) requires a GitHub App installation token. Configure MOODLE_CI_APP_ID and MOODLE_CI_APP_PRIVATE_KEY, install the App on ${PRIVATE_ACCESS_OWNER}, and grant Contents: Read on: ${APP_REPOSITORIES//$'\n'/, }."
           exit 1
 
       - name: Check out moodle-test-action subactions

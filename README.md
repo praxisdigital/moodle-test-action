@@ -147,8 +147,18 @@ Install the App on the org (`inputs.org` / `MOODLE_ORG` / repository owner) with
 
 | Moodle repository | App token required? |
 | --- | --- |
-| `moodle/moodle` (public) | No — uses `GITHUB_TOKEN` when no App token is present |
-| Same-org private fork (e.g. `praxisdigital/moodle`) | Yes — App must have Contents: Read on that repo |
+| `moodle/moodle` (public) | No — uses `GITHUB_TOKEN` only |
+| Same-org private fork (e.g. `praxisdigital/moodle_workplace_moxis`) | Yes — App must include that repo with Contents: Read |
+
+The reusable workflow requests an installation token scoped to:
+
+- the current plugin repository
+- the matrix Moodle repository when it lives under the App org
+- each dependency repository under the App org
+
+If token creation fails, the listed repos are almost always missing from the App installation (selected-repo install mode). Grant access to the private Moodle repo explicitly — plugin deps alone are not enough.
+
+Private Moodle checkout also verifies the configured ref (`moodle` / `MOODLE_*_STABLE`) exists before `actions/checkout`.
 
 Caller workflows should use `secrets: inherit` so the reusable workflow receives these credentials. Jobs fail fast if private Moodle or `dependencies` need a token and the App token cannot be created.
 

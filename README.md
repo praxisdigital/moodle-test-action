@@ -11,10 +11,7 @@ name: Moodle CI
 
 on:
   pull_request:
-    branches:
-      - main
-      - master
-      - MOODLE_*_STABLE
+    types: [ opened, reopened, synchronize ]
   push:
     branches:
       - main
@@ -37,6 +34,8 @@ jobs:
     secrets: inherit
 ```
 
+To update / alter matrix, use the defined repository variables. If need be, using the same format as github repository action variables, override them in the file with `with:`. Note! This will override github repository action values.
+
 Examples:
 
 - [Basic workflow](.github/workflows/example.yml)
@@ -48,19 +47,6 @@ The central workflow resolves settings in this order:
 
 ```text
 workflow input -> repository/organization action variable -> built-in fallback
-```
-
-Useful optional overrides:
-
-```yaml
-with:
-  action_ref: 'custom_test_branch'
-  moodle_versions: '["MOODLE_405_STABLE"]'
-  php_versions: '["8.3"]'
-  db_types: '["mysqli"]'
-  moodle_repositories: '["moodle/moodle"]'
-  dependencies: '["praxisdigital/local_pxsdk@master"]'
-  additional_phpunit_arguments: '--filter SomeTest'
 ```
 
 Plugin component and install path are auto-detected from `$plugin->component` in `version.php`. Use `plugin_component` or `plugin_path` only for unusual plugins.
@@ -108,29 +94,6 @@ The root action is a compatibility wrapper. It runs PHPUnit by default and Behat
     dependencies: |
       praxisdigital/local_pxsdk@master
     action_ref: 'mma_BehatOnDemand'
-    PRIVATE_REPO_TOKEN: ${{ steps.app-token.outputs.token }}
-```
-
-## Modular PHPUnit Usage
-
-```yaml
-- uses: actions/create-github-app-token@v2
-  id: app-token
-  with:
-    app-id: ${{ secrets.MOODLE_CI_APP_ID }}
-    private-key: ${{ secrets.MOODLE_CI_APP_PRIVATE_KEY }}
-    owner: praxisdigital
-    permission-contents: read
-- uses: praxisdigital/moodle-test-action/phpunit-test@master
-  with:
-    plugin: 'local_pxsdk'
-    plugin-path: 'local/pxsdk'
-    php: '8.4'
-    moodle: 'MOODLE_502_STABLE'
-    moodle_repository: 'moodle/moodle'
-    os: 'ubuntu-latest'
-    dbtype: 'mysqli'
-    dependencies: ${{ vars.MOODLE_PLUGIN_DEPENDENCIES || '' }}
     PRIVATE_REPO_TOKEN: ${{ steps.app-token.outputs.token }}
 ```
 

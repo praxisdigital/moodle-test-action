@@ -99,7 +99,9 @@ The root action is a compatibility wrapper. It runs PHPUnit by default and Behat
 
 ## Private repositories (GitHub App)
 
-The reusable workflow mints an org-scoped GitHub App installation token for private Moodle forks and plugin dependencies. Configure:
+The reusable workflow mints an org-scoped GitHub App installation token for private Moodle forks and **private** plugin dependencies. Public Moodle (`moodle/moodle`) and public plugin dependencies clone without the App.
+
+Configure the App only when CI must read private repositories:
 
 | Secret / var | Purpose |
 | --- | --- |
@@ -108,10 +110,19 @@ The reusable workflow mints an org-scoped GitHub App installation token for priv
 
 Install the App on the org (`inputs.org` / `MOODLE_ORG` / repository owner) with at least **Contents: Read** on every private dependency and private Moodle fork CI must clone. Keep **Issues / Pull requests / Statuses** write if you rely on PR command comments or on-demand Behat statuses.
 
-| Moodle repository | App token required? |
+| Checkout target | App token required? |
 | --- | --- |
 | `moodle/moodle` (public) | No — uses `GITHUB_TOKEN` only |
+| Other public Moodle/plugin repos | No — probed as public, cloned unauthenticated |
 | Same-org private fork (e.g. `praxisdigital/moodle_workplace_moxis`) | Yes — App must include that repo with Contents: Read |
+| Private plugin dependencies | Yes — same App install with Contents: Read |
+
+When no App token is available, the workflow probes each Moodle repository and dependency with `GITHUB_TOKEN` via the GitHub API:
+
+- **200 + `private: false`** — public; continue without the App
+- **200 + `private: true`** — private and visible; fail with an App-token required message
+- **404** — either private without access **or** the `org/repo` does not exist (GitHub does not distinguish these); fail with a message covering both cases
+- **403 / other** — fail with access or lookup guidance
 
 The reusable workflow requests an installation token scoped to:
 
@@ -123,7 +134,7 @@ If token creation fails, the listed repos are almost always missing from the App
 
 Private Moodle checkout also verifies the configured ref (`moodle` / `MOODLE_*_STABLE`) exists before `actions/checkout`.
 
-Caller workflows should use `secrets: inherit` so the reusable workflow receives these credentials. Jobs fail fast if private Moodle or `dependencies` need a token and the App token cannot be created.
+Caller workflows should use `secrets: inherit` so the reusable workflow receives these credentials when private access is needed. Jobs fail fast only when a checkout target is not publicly cloneable and the App token cannot be created.
 
 When calling the root or modular actions directly, mint the token in the caller job and pass it as `PRIVATE_REPO_TOKEN`.
 

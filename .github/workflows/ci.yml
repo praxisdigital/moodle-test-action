@@ -580,33 +580,103 @@ jobs:
         env:
           DEPENDENCIES: ${{ matrix.dependencies }}
           MOODLE_REPOSITORY: ${{ matrix.moodle_repository }}
-          APP_REPOSITORIES: ${{ steps.app-repos.outputs.repositories }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
-          moodle_owner="${MOODLE_REPOSITORY%%/*}"
-          needs_private_token=false
-          reason=""
+          set -euo pipefail
 
-          if [ -n "$DEPENDENCIES" ]; then
-            needs_private_token=true
-            reason="plugin dependencies"
-          fi
+          # Collect clone targets that may need authenticated access.
+          # Public repos are cloneable without an App token; private or
+          # inaccessible ones are not.
+          targets_file="$(mktemp)"
+          errors_file="$(mktemp)"
+          trap 'rm -f "$targets_file" "$errors_file"' EXIT
 
-          # Public moodle/moodle (and other moodle/*) can use GITHUB_TOKEN.
-          # Any other owner (e.g. org private Moodle fork) needs the App token.
-          if [ -n "$moodle_owner" ] && [ "$moodle_owner" != "moodle" ]; then
-            needs_private_token=true
-            if [ -n "$reason" ]; then
-              reason="${reason} and Moodle repository ${MOODLE_REPOSITORY}"
-            else
-              reason="Moodle repository ${MOODLE_REPOSITORY}"
-            fi
-          fi
+          add_target() {
+            local full="$1"
+            [ -n "$full" ] || return 0
+            # Strip optional @ref from org/repo@ref dependency entries.
+            full="${full%@*}"
+            case "$full" in
+              */*) printf '%s\n' "$full" >> "$targets_file" ;;
+            esac
+          }
 
-          if [ "$needs_private_token" != "true" ]; then
+          add_target "$MOODLE_REPOSITORY"
+          for dep in $DEPENDENCIES; do
+            add_target "$dep"
+          done
+
+          if [ ! -s "$targets_file" ]; then
             exit 0
           fi
 
-          echo "::error::Private checkout (${reason}) requires a GitHub App installation token. Configure MOODLE_CI_APP_ID and MOODLE_CI_APP_PRIVATE_KEY, install the App on ${PRIVATE_ACCESS_OWNER}, and grant Contents: Read on: ${APP_REPOSITORIES//$'\n'/, }."
+          probe_repo() {
+            local repo="$1"
+            local owner="${repo%%/*}"
+            local body_file
+            local code
+            local private
+
+            # Official moodle/* hosts are always treated as public.
+            if [ "$owner" = "moodle" ]; then
+              return 0
+            fi
+
+            body_file="$(mktemp)"
+            code="$(curl -sS -o "$body_file" -w "%{http_code}" \
+              -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${repo}" || true)"
+
+            case "$code" in
+              200)
+                private="$(jq -r '.private | if . == true then "true" elif . == false then "false" else "unknown" end' "$body_file" 2>/dev/null || echo unknown)"
+                rm -f "$body_file"
+                if [ "$private" = "false" ]; then
+                  return 0
+                fi
+                if [ "$private" = "true" ]; then
+                  printf '%s\n' "${repo}: private repository (visible to GITHUB_TOKEN) requires a GitHub App installation token with Contents: Read. Configure MOODLE_CI_APP_ID and MOODLE_CI_APP_PRIVATE_KEY, install the App on ${PRIVATE_ACCESS_OWNER}, and grant access to this repository." >> "$errors_file"
+                  return 0
+                fi
+                printf '%s\n' "${repo}: unexpected repository payload (HTTP 200 without a usable private flag). Re-check the repository name or configure a GitHub App token." >> "$errors_file"
+                ;;
+              404)
+                rm -f "$body_file"
+                # GitHub returns 404 for both missing repos and private repos the
+                # token cannot see, so keep the message deliberately ambiguous.
+                printf '%s\n' "${repo}: cannot access repository (HTTP 404). It is either private (needs a GitHub App installation token with Contents: Read on ${PRIVATE_ACCESS_OWNER}) or the org/repo name does not exist. Check the spelling, or configure MOODLE_CI_APP_ID and MOODLE_CI_APP_PRIVATE_KEY and install the App with access to this repository." >> "$errors_file"
+                ;;
+              403)
+                rm -f "$body_file"
+                printf '%s\n' "${repo}: access denied (HTTP 403). Grant the GitHub App Contents: Read on this repository (configure MOODLE_CI_APP_ID and MOODLE_CI_APP_PRIVATE_KEY, install on ${PRIVATE_ACCESS_OWNER}), or ensure the repository is public." >> "$errors_file"
+                ;;
+              401)
+                rm -f "$body_file"
+                printf '%s\n' "${repo}: authentication failed (HTTP 401) while probing visibility. Configure MOODLE_CI_APP_ID and MOODLE_CI_APP_PRIVATE_KEY for private checkout." >> "$errors_file"
+                ;;
+              *)
+                rm -f "$body_file"
+                printf '%s\n' "${repo}: GitHub API lookup failed (HTTP ${code:-unknown}). Configure MOODLE_CI_APP_ID and MOODLE_CI_APP_PRIVATE_KEY if this repository is private, or verify the org/repo name." >> "$errors_file"
+                ;;
+            esac
+          }
+
+          while IFS= read -r repo; do
+            [ -n "$repo" ] || continue
+            probe_repo "$repo"
+          done < <(sort -u "$targets_file")
+
+          if [ ! -s "$errors_file" ]; then
+            exit 0
+          fi
+
+          {
+            echo "::error::One or more checkout targets are not publicly cloneable without a GitHub App installation token:"
+            sed 's/^/  - /' "$errors_file"
+            echo "Public repositories and public plugin dependencies do not require the App. Private Moodle forks and private dependencies do."
+          } >&2
           exit 1
 
       - name: Check out moodle-test-action subactions

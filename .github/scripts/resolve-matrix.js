@@ -165,7 +165,7 @@ const legacyRows = ({ phpVersions, moodleVersions, repositories, os, dbTypes, ex
   return { rows, description: `Legacy matrix: ${rows.length} row(s) from workflow inputs and/or org/repository variables` };
 };
 
-const resolve = async ({ github, appGithub, context, branch, dbTypes, suites, dependencies, phpVersions = [], cataloguePath, versionPath }) => {
+const resolve = async ({ github, appToken, context, branch, dbTypes, suites, dependencies, phpVersions = [], cataloguePath, versionPath, request = fetch }) => {
   const catalogue = validateCatalogue(JSON.parse(fs.readFileSync(cataloguePath, 'utf8')));
   const metadata = readMetadata(fs.readFileSync(versionPath, 'utf8'));
   const { owner, repo } = context.repo;
@@ -174,17 +174,28 @@ const resolve = async ({ github, appGithub, context, branch, dbTypes, suites, de
   if (!targets.length) throw new Error(`No catalogue targets match ${branch} and plugin version.php`);
   const coreVersions = {};
   for (const target of targets) {
-    const client = target.product === 'workplace' && appGithub ? appGithub : github;
     const [targetOwner, targetRepo] = target.repository.split('/');
-    let response;
+    const file = target.version_file || 'version.php';
+    let data;
     try {
-      response = await client.rest.repos.getContent({ owner: targetOwner, repo: targetRepo,
-        path: target.version_file || 'version.php', ref: target.ref });
+      if (target.product === 'workplace' && appToken) {
+        const url = new URL(`${process.env.GITHUB_API_URL || 'https://api.github.com'}/repos/${targetOwner}/${targetRepo}/contents/${file}`);
+        url.searchParams.set('ref', target.ref);
+        const response = await request(url, { headers: {
+          Authorization: `Bearer ${appToken}`,
+          Accept: 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28',
+        } });
+        if (!response.ok) throw Object.assign(new Error('GitHub API request failed'), { status: response.status });
+        data = await response.json();
+      } else {
+        data = (await github.rest.repos.getContent({ owner: targetOwner, repo: targetRepo, path: file, ref: target.ref })).data;
+      }
     } catch (error) {
-      throw new Error(`Cannot read ${target.repository}@${target.ref}/${target.version_file || 'version.php'} (HTTP ${error.status || 'unknown'}). Check catalogue ref, version_file and private GitHub App Contents: Read access.`);
+      throw new Error(`Cannot read ${target.repository}@${target.ref}/${file} (HTTP ${error.status || 'unknown'}). Check catalogue ref, version_file and private GitHub App Contents: Read access.`);
     }
-    if (response.data.type !== 'file' || !response.data.content) throw new Error(`Invalid core version.php at ${target.repository}@${target.ref}`);
-    const coreText = Buffer.from(response.data.content, 'base64').toString('utf8');
+    if (data.type !== 'file' || !data.content) throw new Error(`Invalid core version.php at ${target.repository}@${target.ref}`);
+    const coreText = Buffer.from(data.content, 'base64').toString('utf8');
     const version = coreText.match(/\$version\s*=\s*(\d+)(?:\.\d+)?\s*;/);
     if (!version) throw new Error(`Cannot read core $version at ${target.repository}@${target.ref}`);
     coreVersions[`${target.repository}@${target.ref}`] = Number(version[1]);

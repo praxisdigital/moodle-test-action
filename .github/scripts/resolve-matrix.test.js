@@ -134,3 +134,32 @@ test('resolver reads matching core version.php before building automatic rows', 
     fs.rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test('private Workplace core is read with the scoped App token, not an unavailable module', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'workplace-matrix-'));
+  const versionPath = path.join(directory, 'version.php');
+  fs.writeFileSync(versionPath, '<?php $plugin->requires = 2025041400;');
+  let requested;
+  try {
+    const result = await resolve({
+      github: {
+        paginate: async () => [{ name: 'WORKPLACE_500_STABLE' }, { name: 'WORKPLACE_502_STABLE' }],
+        rest: { repos: { listBranches() {}, getContent: () => { throw new Error('wrong token used'); } } },
+      },
+      appToken: 'test-app-token',
+      request: async (url, options) => {
+        requested = { url: String(url), authorization: options.headers.Authorization };
+        return { ok: true, json: async () => ({ type: 'file',
+          content: Buffer.from('$version = 2025041400.00;').toString('base64') }) };
+      },
+      context: { repo: { owner: 'example', repo: 'plugin' } },
+      branch: 'WORKPLACE_500_STABLE', dbTypes: ['mysqli'], suites: ['phpunit'], dependencies: '',
+      cataloguePath: path.join(__dirname, '..', 'moodle-test-targets.json'), versionPath,
+    });
+    assert.deepEqual(releases(result.targets), ['5.0']);
+    assert.match(requested.url, /\/repos\/praxisdigital\/moodle_workplace_moxis\/contents\/version\.php\?ref=WORKPLACE_500_LATEST$/);
+    assert.equal(requested.authorization, 'Bearer test-app-token');
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});

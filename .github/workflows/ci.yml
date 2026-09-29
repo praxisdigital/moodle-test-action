@@ -185,6 +185,7 @@ jobs:
         with:
           app-id: ${{ env.MOODLE_CI_APP_ID_VALUE }}
           private-key: ${{ secrets.MOODLE_CI_APP_PRIVATE_KEY }}
+          owner: ${{ inputs.org || vars.MOODLE_ORG || github.repository_owner }}
           permission-contents: read
           permission-issues: write
           permission-pull-requests: write
@@ -481,8 +482,7 @@ jobs:
               const dependencies = process.env.DEPENDENCIES || '';
               let result;
               if (process.env.AUTOMATIC === 'true') {
-                const appGithub = process.env.APP_TOKEN ? require('@actions/github').getOctokit(process.env.APP_TOKEN) : null;
-                result = await resolver.resolve({ github, appGithub, context,
+                result = await resolver.resolve({ github, appToken: process.env.APP_TOKEN, context,
                   branch: process.env.BASE_BRANCH, dbTypes, suites, dependencies,
                   phpVersions: JSON.parse(process.env.PHP_VERSIONS),
                   cataloguePath: `${process.env.GITHUB_WORKSPACE}/.moodle-test-action/.github/moodle-test-targets.json`,

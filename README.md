@@ -44,6 +44,7 @@ jobs:
     with:
       automatic: 'true'
       # Optional: php_versions: '["8.3", "8.4"]'
+      # Optional: products: '["moodle"]' or '["workplace"]' (default: both)
       # Keep db_types, dependencies and optional Behat/service settings as needed.
 ```
 
@@ -62,13 +63,13 @@ With `automatic: 'false'` (the default), the original matrix settings resolve in
 workflow input -> repository/organization action variable -> built-in fallback
 ```
 
-The legacy fallbacks remain Moodle 5.2, PHP 8.4, `moodle/moodle`, `ubuntu-latest`, MySQLi and non-experimental. `automatic: 'true'` ignores the legacy Moodle-ref, repository, runner, experimental and exclusion inputs/variables, including old org/repo PHP variables. It **still accepts an explicit `with: php_versions`** as an optional filter, as well as `db_types`, `dependencies`, Behat/PHPUnit controls and other service settings. If the PHP filter has no compatible version for any selected Moodle target, setup fails instead of silently omitting that release.
+The legacy fallbacks remain Moodle 5.2, PHP 8.4, `moodle/moodle`, `ubuntu-latest`, MySQLi and non-experimental. `automatic: 'true'` ignores the legacy Moodle-ref, repository, runner, experimental and exclusion inputs/variables, including old org/repo PHP variables. It **still accepts an explicit `with: php_versions`** as an optional filter, plus `products: '["moodle"]'` or `products: '["workplace"]'` to run only one product. By default **both Moodle and Workplace run** on a `MOODLE_*` or `WORKPLACE_*` plugin branch. `db_types`, `dependencies`, Behat/PHPUnit controls and other service settings remain active. If the PHP filter has no compatible version for any selected target, setup fails instead of silently omitting that release.
 
 ## Automatic Moodle matrix
 
 The central [JSON catalogue](.github/moodle-test-targets.json) is the list of **applicable** test targets. Moodle and Workplace both include 4.1, 4.4, 4.5, 5.0 and 5.2; Workplace uses `WORKPLACE_*_LATEST` refs, not the numbered or rolling branches. Each entry couples a release, product, exact core repository/ref, and inclusive `php_min`/`php_max` versions. All PHP minor versions between those bounds are tested; for example `8.2`–`8.4` generates 8.2, 8.3 and 8.4. Set `version_file: "public/version.php"` for core branches using Moodle's new `public/` layout (otherwise the root file is used). Update the catalogue once to add a newly applicable release (such as 5.3) or adjust its supported PHP range. Do not add all upstream stable branches automatically. The private Workplace fork's PHP support and version-file paths still need verification with App access.
 
-For a PR, setup reads `version.php` from the PR **merge ref** and uses the PR's base branch; for a push it uses that commit and branch. Plugin release branches partition the catalogue: `MOODLE_41_STABLE` owns applicable releases from 4.1 up to (but not including) the next release branch in that plugin repository. `41`/`401` and `50`/`500` normalize to the same releases. Workplace `*_LATEST` branches are also recognized. The first branch-name segment must be at least four characters, so issue branches beginning `mma_`, `tk_`, or `abc_` do not create release boundaries. PRs into **any** branch still run; non-release branches test the newest applicable target for the inferred product.
+For a PR, setup reads `version.php` from the PR **merge ref** and uses the PR's base branch; for a push it uses that commit and branch. Plugin release branches partition **both products'** catalogues by version: `MOODLE_41_STABLE` owns applicable Moodle *and* Workplace releases from 4.1 up to (but not including) the next release branch in that plugin repository. The branch prefix is not a product restriction. `41`/`401` and `50`/`500` normalize to the same releases. Workplace `*_LATEST` branches are also recognized. The first branch-name segment must be at least four characters, so issue branches beginning `mma_`, `tk_`, or `abc_` do not create release boundaries. PRs into **any** branch still run; non-release branches test the newest applicable target of each selected product. Both products require a readable core ref, so private Workplace tests need GitHub App access even when the plugin branch starts `MOODLE_`.
 
 The tested revision's `$plugin->requires`, `$plugin->supported` and `$plugin->incompatible` further filter the selection. Literal values are read without running plugin PHP. Core `version.php` is checked at each selected ref to enforce the required version. When compatibility cannot be inferred safely, setup fails with an explanation rather than generating a misleading matrix. Without an explicit upper bound in plugin metadata, tests are the final check for compatibility with newer releases.
 

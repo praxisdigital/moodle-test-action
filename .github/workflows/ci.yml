@@ -8,6 +8,11 @@ on:
         required: false
         type: string
         default: 'false'
+      products:
+        description: 'Optional JSON array of products to test in automatic mode: moodle and/or workplace (defaults to both)'
+        required: false
+        type: string
+        default: ''
       run_phpunit:
         description: 'Run PHPUnit tests'
         required: false
@@ -449,6 +454,7 @@ jobs:
         env:
           DB_TYPES: ${{ steps.config.outputs.db_types }}
           AUTOMATIC: ${{ steps.config.outputs.automatic }}
+          PRODUCTS: ${{ inputs.products }}
           PHP_VERSIONS: ${{ steps.config.outputs.php_versions }}
           MOODLE_VERSIONS: ${{ steps.config.outputs.moodle_versions }}
           MOODLE_REPOSITORIES: ${{ steps.config.outputs.moodle_repositories }}
@@ -485,6 +491,7 @@ jobs:
                 result = await resolver.resolve({ github, appToken: process.env.APP_TOKEN, context,
                   branch: process.env.BASE_BRANCH, dbTypes, suites, dependencies,
                   phpVersions: JSON.parse(process.env.PHP_VERSIONS),
+                  products: process.env.PRODUCTS ? JSON.parse(process.env.PRODUCTS) : undefined,
                   cataloguePath: `${process.env.GITHUB_WORKSPACE}/.moodle-test-action/.github/moodle-test-targets.json`,
                   versionPath: `${process.env.GITHUB_WORKSPACE}/plugin-src/version.php`,
                 });

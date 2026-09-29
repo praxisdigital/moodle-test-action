@@ -27,24 +27,37 @@ test('normalizes legacy and three-digit branch numbers, excluding short issue pr
 
 test('repository A: each release branch owns targets until its successor', () => {
   const branches = ['MOODLE_41_STABLE', 'MOODLE_45_STABLE', 'MOODLE_50_STABLE'];
-  assert.deepEqual(releases(selectTargets(catalogue, branches, branches[0], requires)), ['4.1', '4.4']);
-  assert.deepEqual(releases(selectTargets(catalogue, branches, branches[1], requires)), ['4.5']);
-  assert.deepEqual(releases(selectTargets(catalogue, branches, branches[2], requires)), ['5.0', '5.2']);
+  assert.deepEqual(releases(selectTargets(catalogue, branches, branches[0], requires, ['moodle'])), ['4.1', '4.4']);
+  assert.deepEqual(releases(selectTargets(catalogue, branches, branches[1], requires, ['moodle'])), ['4.5']);
+  assert.deepEqual(releases(selectTargets(catalogue, branches, branches[2], requires, ['moodle'])), ['5.0', '5.2']);
 });
 
 test('repository B: a 5.2 branch takes ownership of 5.2 and newer', () => {
   const branches = ['MOODLE_41_STABLE', 'MOODLE_500_STABLE', 'MOODLE_502_STABLE'];
-  assert.deepEqual(releases(selectTargets(catalogue, branches, branches[0], requires)), ['4.1', '4.4', '4.5']);
-  assert.deepEqual(releases(selectTargets(catalogue, branches, branches[1], requires)), ['5.0']);
-  assert.deepEqual(releases(selectTargets(catalogue, branches, branches[2], requires)), ['5.2']);
+  assert.deepEqual(releases(selectTargets(catalogue, branches, branches[0], requires, ['moodle'])), ['4.1', '4.4', '4.5']);
+  assert.deepEqual(releases(selectTargets(catalogue, branches, branches[1], requires, ['moodle'])), ['5.0']);
+  assert.deepEqual(releases(selectTargets(catalogue, branches, branches[2], requires, ['moodle'])), ['5.2']);
 });
 
 test('Workplace release branches use the same applicable release boundaries', () => {
   const branches = ['WORKPLACE_41_STABLE', 'WORKPLACE_500_STABLE', 'WORKPLACE_502_STABLE'];
-  assert.deepEqual(releases(selectTargets(catalogue, branches, branches[0], requires)), ['4.1', '4.4', '4.5']);
-  assert.deepEqual(releases(selectTargets(catalogue, branches, branches[1], requires)), ['5.0']);
-  assert.deepEqual(releases(selectTargets(catalogue, branches, branches[2], requires)), ['5.2']);
-  assert.ok(selectTargets(catalogue, branches, branches[0], requires).every(target => target.ref.startsWith('WORKPLACE_')));
+  assert.deepEqual(releases(selectTargets(catalogue, branches, branches[0], requires, ['workplace'])), ['4.1', '4.4', '4.5']);
+  assert.deepEqual(releases(selectTargets(catalogue, branches, branches[1], requires, ['workplace'])), ['5.0']);
+  assert.deepEqual(releases(selectTargets(catalogue, branches, branches[2], requires, ['workplace'])), ['5.2']);
+  assert.ok(selectTargets(catalogue, branches, branches[0], requires, ['workplace']).every(target => target.ref.startsWith('WORKPLACE_')));
+});
+
+test('both products run by default on either branch prefix; explicit products restrict them', () => {
+  const branches = ['MOODLE_500_STABLE', 'WORKPLACE_502_STABLE'];
+  for (const base of ['MOODLE_500_STABLE', 'WORKPLACE_500_STABLE']) {
+    const selected = selectTargets(catalogue, branches, base, requires);
+    assert.deepEqual(selected.map(target => [target.product, target.release]), [
+      ['moodle', '5.0'], ['workplace', '5.0'],
+    ]);
+    assert.deepEqual(selectTargets(catalogue, branches, base, requires, ['workplace']).map(target => target.product), ['workplace']);
+  }
+  assert.deepEqual(selectTargets(catalogue, branches, 'feature/123', requires).map(target => target.product), ['moodle', 'workplace']);
+  assert.throws(() => selectTargets(catalogue, branches, branches[0], requires, ['other']), /products/);
 });
 
 test('version.php supported and incompatible versions narrow branch ranges', () => {
@@ -53,16 +66,16 @@ test('version.php supported and incompatible versions narrow branch ranges', () 
     $plugin->supported = [500, 502];
     $plugin->incompatible = 502;
   `);
-  assert.deepEqual(releases(selectTargets(catalogue, ['MOODLE_500_STABLE'], 'MOODLE_500_STABLE', metadata)), ['5.0']);
+  assert.deepEqual(releases(selectTargets(catalogue, ['MOODLE_500_STABLE'], 'MOODLE_500_STABLE', metadata, ['moodle'])), ['5.0']);
 });
 
 test('ordinary branches are tested on latest eligible target without becoming boundaries', () => {
   const branches = ['MOODLE_500_STABLE', 'MOODLE_502_STABLE', 'mma_123_500_STABLE'];
-  assert.deepEqual(releases(selectTargets(catalogue, branches, 'feature/work', requires)), ['5.2']);
+  assert.deepEqual(releases(selectTargets(catalogue, branches, 'feature/work', requires, ['moodle'])), ['5.2']);
 });
 
 test('workplace ref and PHP range remain coupled', () => {
-  const selected = selectTargets(catalogue, ['WORKPLACE_500_LATEST', 'WORKPLACE_502_LATEST'], 'WORKPLACE_500_LATEST', requires);
+  const selected = selectTargets(catalogue, ['WORKPLACE_500_LATEST', 'WORKPLACE_502_LATEST'], 'WORKPLACE_500_LATEST', requires, ['workplace']);
   const key = `${selected[0].repository}@${selected[0].ref}`;
   const rows = buildRows(selected, ['mysqli', 'sqlsrv'], ['phpunit', 'behat'], '', { [key]: 2025041400 });
   assert.deepEqual(selected.map(target => target.release), ['5.0']);
@@ -72,7 +85,7 @@ test('workplace ref and PHP range remain coupled', () => {
 });
 
 test('automatic PHP filter intersects each catalogue range without dropping releases', () => {
-  const selected = selectTargets(catalogue, ['MOODLE_500_STABLE'], 'MOODLE_500_STABLE', requires);
+  const selected = selectTargets(catalogue, ['MOODLE_500_STABLE'], 'MOODLE_500_STABLE', requires, ['moodle']);
   const versions = Object.fromEntries(selected.map(target => [`${target.repository}@${target.ref}`, 2026042000]));
   const rows = buildRows(selected, ['mysqli'], ['phpunit'], '', versions, ['8.3', '8.4', '7.4']);
   assert.deepEqual([...new Set(rows.map(row => row.moodle))], ['MOODLE_500_STABLE', 'MOODLE_502_STABLE']);
@@ -120,6 +133,7 @@ test('resolver reads matching core version.php before building automatic rows', 
   try {
     const result = await resolve({ github, context: { repo: { owner: 'example', repo: 'plugin' } },
       branch: 'MOODLE_500_STABLE', dbTypes: ['mysqli'], suites: ['phpunit'], dependencies: '',
+      products: ['moodle'],
       cataloguePath: path.join(__dirname, '..', 'moodle-test-targets.json'), versionPath,
       overrides: { moodle: ['MOODLE_401_STABLE'], php: ['7.4'] },
     });
@@ -128,6 +142,7 @@ test('resolver reads matching core version.php before building automatic rows', 
     fs.writeFileSync(versionPath, '<?php $plugin->requires = 2026042000;');
     await assert.rejects(() => resolve({ github, context: { repo: { owner: 'example', repo: 'plugin' } },
       branch: 'MOODLE_500_STABLE', dbTypes: ['mysqli'], suites: ['phpunit'], dependencies: '',
+      products: ['moodle'],
       cataloguePath: path.join(__dirname, '..', 'moodle-test-targets.json'), versionPath,
     }), /owns targets whose core version is below/);
   } finally {
@@ -135,7 +150,7 @@ test('resolver reads matching core version.php before building automatic rows', 
   }
 });
 
-test('private Workplace core is read with the scoped App token, not an unavailable module', async () => {
+test('default resolver reads public Moodle and private Workplace with their respective credentials', async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'workplace-matrix-'));
   const versionPath = path.join(directory, 'version.php');
   fs.writeFileSync(versionPath, '<?php $plugin->requires = 2025041400;');
@@ -144,7 +159,10 @@ test('private Workplace core is read with the scoped App token, not an unavailab
     const result = await resolve({
       github: {
         paginate: async () => [{ name: 'WORKPLACE_500_STABLE' }, { name: 'WORKPLACE_502_STABLE' }],
-        rest: { repos: { listBranches() {}, getContent: () => { throw new Error('wrong token used'); } } },
+        rest: { repos: { listBranches() {}, getContent: async ({ owner }) => {
+          assert.equal(owner, 'moodle');
+          return { data: { type: 'file', content: Buffer.from('$version = 2025041400.00;').toString('base64') } };
+        } } },
       },
       appToken: 'test-app-token',
       request: async (url, options) => {
@@ -156,7 +174,7 @@ test('private Workplace core is read with the scoped App token, not an unavailab
       branch: 'WORKPLACE_500_STABLE', dbTypes: ['mysqli'], suites: ['phpunit'], dependencies: '',
       cataloguePath: path.join(__dirname, '..', 'moodle-test-targets.json'), versionPath,
     });
-    assert.deepEqual(releases(result.targets), ['5.0']);
+    assert.deepEqual(result.targets.map(target => [target.product, target.release]), [['moodle', '5.0'], ['workplace', '5.0']]);
     assert.match(requested.url, /\/repos\/praxisdigital\/moodle_workplace_moxis\/contents\/version\.php\?ref=WORKPLACE_500_LATEST$/);
     assert.equal(requested.authorization, 'Bearer test-app-token');
   } finally {

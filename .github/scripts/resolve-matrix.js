@@ -82,24 +82,29 @@ const readMetadata = text => {
   };
 };
 
-const selectTargets = (catalogue, branches, base, metadata) => {
+const selectTargets = (catalogue, branches, base, metadata, products = ['moodle', 'workplace']) => {
+  if (!Array.isArray(products) || !products.length || products.some(product => !['moodle', 'workplace'].includes(product))) {
+    throw new Error('products must be a non-empty JSON array containing moodle and/or workplace');
+  }
+  const chosenProducts = [...new Set(products)];
   const parsed = branches.map(releaseBranch).filter(Boolean);
   const current = releaseBranch(base);
-  // For non-release branches, use the product of the repo's release branches when
-  // unambiguous. Otherwise default to Moodle, never invent a Workplace checkout.
-  const products = new Set(parsed.map(branch => branch.product));
-  if (!current && products.size > 1) throw new Error(`Cannot infer Moodle product for ${base}; release branches span multiple products`);
-  const product = current?.product || (products.has('workplace') ? 'workplace' : 'moodle');
-  const candidates = catalogue.filter(target => target.product === product);
-  if (!candidates.length) throw new Error(`No applicable ${product} targets in the catalogue`);
+  // A plugin branch controls the version interval for every selected product;
+  // its MOODLE/WORKPLACE prefix does not restrict which core repositories run.
+  const candidates = catalogue.filter(target => chosenProducts.includes(target.product));
+  for (const product of chosenProducts) {
+    if (!candidates.some(target => target.product === product)) throw new Error(`No applicable ${product} targets in the catalogue`);
+  }
 
   let selected = candidates;
   if (current) {
-    if (!candidates.some(target => target.number === current.release)) {
-      throw new Error(`Release branch ${base} has no ${product} target in the catalogue`);
+    for (const product of chosenProducts) {
+      if (!candidates.some(target => target.product === product && target.number === current.release)) {
+        throw new Error(`Release branch ${base} has no ${product} target in the catalogue`);
+      }
     }
     const next = Math.min(Infinity, ...parsed
-      .filter(branch => branch.product === product && branch.release > current.release)
+      .filter(branch => branch.release > current.release)
       .map(branch => branch.release));
     selected = candidates.filter(target => target.number >= current.release && target.number < next);
   }
@@ -107,15 +112,17 @@ const selectTargets = (catalogue, branches, base, metadata) => {
   selected = selected.filter(target =>
     (!metadata.supported || (target.number >= metadata.supported[0] && target.number <= metadata.supported[1])) &&
     (!metadata.incompatible || target.number < metadata.incompatible));
-  if (current && !selected.some(target => target.number === current.release)) {
+  if (current && chosenProducts.some(product => !selected.some(target => target.product === product && target.number === current.release))) {
     throw new Error(`${base} is excluded by this revision's supported/incompatible version.php range`);
   }
   if (!current && selected.length) {
     // Development branches have no ownership range: test the newest compatible
-    // target, not every historical version in the catalogue.
-    selected = [selected.reduce((latest, target) => target.number > latest.number ? target : latest)];
+    // target of each product, not every historical version in the catalogue.
+    selected = chosenProducts.map(product => selected
+      .filter(target => target.product === product)
+      .reduce((latest, target) => target.number > latest.number ? target : latest));
   }
-  return selected.sort((a, b) => a.number - b.number);
+  return selected.sort((a, b) => a.number - b.number || chosenProducts.indexOf(a.product) - chosenProducts.indexOf(b.product));
 };
 
 const buildRows = (targets, dbTypes, suites, dependencies, coreVersions, phpVersions = []) => {
@@ -165,12 +172,12 @@ const legacyRows = ({ phpVersions, moodleVersions, repositories, os, dbTypes, ex
   return { rows, description: `Legacy matrix: ${rows.length} row(s) from workflow inputs and/or org/repository variables` };
 };
 
-const resolve = async ({ github, appToken, context, branch, dbTypes, suites, dependencies, phpVersions = [], cataloguePath, versionPath, request = fetch }) => {
+const resolve = async ({ github, appToken, context, branch, dbTypes, suites, dependencies, phpVersions = [], products, cataloguePath, versionPath, request = fetch }) => {
   const catalogue = validateCatalogue(JSON.parse(fs.readFileSync(cataloguePath, 'utf8')));
   const metadata = readMetadata(fs.readFileSync(versionPath, 'utf8'));
   const { owner, repo } = context.repo;
   const branches = await github.paginate(github.rest.repos.listBranches, { owner, repo, per_page: 100 });
-  const targets = selectTargets(catalogue, branches.map(item => item.name), branch, metadata);
+  const targets = selectTargets(catalogue, branches.map(item => item.name), branch, metadata, products);
   if (!targets.length) throw new Error(`No catalogue targets match ${branch} and plugin version.php`);
   const coreVersions = {};
   for (const target of targets) {

@@ -164,7 +164,9 @@ When calling the root or modular actions directly, mint the token in the caller 
 
 ## Notes
 
+- To verify resolver and PR-workflow parsing changes locally, run `npm ci --ignore-scripts` and `npm test`. The `#behat` setup job installs the locked YAML parser only when it needs to read a PR workflow.
 - PHPUnit supports `mysqli`, `pgsql`, and `sqlsrv`.
 - Behat supports `mysqli` and `pgsql`.
 - Dependencies use `org/repo@ref` format.
 - `issue_comment` workflows must exist on the plugin repository default branch before `#behat` comments can trigger them.
+- For `#behat` on a same-repository PR, the default-branch workflow receives the comment, but setup reads `.github/workflows/ci.yml` from the **PR merge commit**. Its reusable-workflow job's literal `with:` inputs (including `dependencies`, `db_types`, `automatic`, PHP/product filters and Behat settings) take precedence over repository/organization variables. Values omitted on the PR use repository/organization variables or reusable-workflow defaults, **not** stale default-branch `with:` inputs. The PR workflow must contain exactly one `praxisdigital/moodle-test-action/.github/workflows/ci.yml@...` job; dynamic `${{ ... }}` expressions in its `with:` values are not evaluated and fail with a diagnostic. `org` and `action_ref` cannot change relative to the default-branch caller during a comment run. Fork PR `#behat` runs are rejected because comment runs have private-repository credentials.

@@ -9,6 +9,7 @@
     { "release": "5.0", "required": true, "product": "moodle", "repository": "moodle/moodle", "ref": "MOODLE_500_STABLE", "php_min": "8.2", "php_max": "8.4" },
     { "release": "5.1", "required": false, "product": "moodle", "repository": "moodle/moodle", "ref": "MOODLE_501_STABLE", "version_file": "public/version.php", "php_min": "8.2", "php_max": "8.4" },
     { "release": "5.2", "required": true, "product": "moodle", "repository": "moodle/moodle", "ref": "MOODLE_502_STABLE", "version_file": "public/version.php", "php_min": "8.3", "php_max": "8.4" },
+    { "release": "4.0", "required": false, "product": "workplace", "repository": "praxisdigital/moodle_workplace_moxis", "ref": "WORKPLACE_400_LATEST", "php_min": "7.3", "php_max": "8.0" },
     { "release": "4.1", "required": true, "product": "workplace", "repository": "praxisdigital/moodle_workplace_moxis", "ref": "WORKPLACE_401_LATEST", "php_min": "7.4", "php_max": "8.1" },
     { "release": "4.3", "required": false, "product": "workplace", "repository": "praxisdigital/moodle_workplace_moxis", "ref": "WORKPLACE_403_LATEST", "php_min": "8.0", "php_max": "8.2" },
     { "release": "4.4", "required": false, "product": "workplace", "repository": "praxisdigital/moodle_workplace_moxis", "ref": "WORKPLACE_404_LATEST", "php_min": "8.1", "php_max": "8.3" },

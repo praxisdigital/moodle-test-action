@@ -83,7 +83,7 @@ test('version.php sets the baseline even when the branch name is older', () => {
   const from40 = readMetadata('<?php $plugin->requires = 2022041900;');
   assert.deepEqual(choose(['MOODLE_400_STABLE', 'MOODLE_402_STABLE'], 'MOODLE_400_STABLE', from40,
     ['moodle', 'workplace']).map(target => `${target.product}:${target.release}`),
-  ['moodle:4.0', 'moodle:4.1', 'workplace:4.1']);
+  ['moodle:4.0', 'workplace:4.0', 'moodle:4.1', 'workplace:4.1']);
 });
 
 test('version.php supported and incompatible versions narrow branch ranges', () => {

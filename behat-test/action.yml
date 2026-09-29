@@ -42,6 +42,10 @@ inputs:
     description: 'Optional pull request number to test; auto-detected for issue_comment and pull_request events'
     required: false
     default: ''
+  checkout_ref:
+    description: 'Optional pinned plugin commit to test (set by the reusable workflow)'
+    required: false
+    default: ''
   PRIVATE_REPO_TOKEN:
     description: 'Optional GitHub App installation token (or other token) for private Moodle/dependency repositories'
     required: false
@@ -88,6 +92,8 @@ runs:
     - name: Resolve test target
       id: target
       uses: actions/github-script@v8
+      env:
+        CHECKOUT_REF: ${{ inputs.checkout_ref }}
       with:
         script: |
           const { owner, repo } = context.repo;
@@ -100,7 +106,7 @@ runs:
             }
             const pullNumber = context.payload.issue.number;
             core.setOutput('checkout_repository', `${owner}/${repo}`);
-            core.setOutput('checkout_ref', `refs/pull/${pullNumber}/merge`);
+            core.setOutput('checkout_ref', process.env.CHECKOUT_REF || `refs/pull/${pullNumber}/merge`);
             core.setOutput('comment_issue_number', String(pullNumber));
             return;
           }
@@ -108,7 +114,7 @@ runs:
           if (context.eventName === 'pull_request') {
             const pullNumber = context.payload.pull_request.number;
             core.setOutput('checkout_repository', `${owner}/${repo}`);
-            core.setOutput('checkout_ref', `refs/pull/${pullNumber}/merge`);
+            core.setOutput('checkout_ref', process.env.CHECKOUT_REF || `refs/pull/${pullNumber}/merge`);
             core.setOutput('comment_issue_number', String(pullNumber));
             return;
           }
@@ -120,13 +126,13 @@ runs:
               return;
             }
             core.setOutput('checkout_repository', `${owner}/${repo}`);
-            core.setOutput('checkout_ref', `refs/pull/${pullNumber}/merge`);
+            core.setOutput('checkout_ref', process.env.CHECKOUT_REF || `refs/pull/${pullNumber}/merge`);
             core.setOutput('comment_issue_number', String(pullNumber));
             return;
           }
 
           core.setOutput('checkout_repository', `${owner}/${repo}`);
-          core.setOutput('checkout_ref', context.sha);
+          core.setOutput('checkout_ref', process.env.CHECKOUT_REF || context.sha);
           core.setOutput('comment_issue_number', '');
 
     - name: Check out plugin target

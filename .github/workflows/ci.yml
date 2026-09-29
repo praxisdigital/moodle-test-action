@@ -3,6 +3,16 @@ name: Moodle plugin CI
 on:
   workflow_call:
     inputs:
+      automatic:
+        description: 'Use the central catalogue and plugin version.php for matrix generation (set false for legacy matrix overrides)'
+        required: false
+        type: string
+        default: 'true'
+      products:
+        description: 'Optional JSON array of products to test in automatic mode: moodle and/or workplace (defaults to both)'
+        required: false
+        type: string
+        default: ''
       run_phpunit:
         description: 'Run PHPUnit tests'
         required: false
@@ -29,22 +39,22 @@ on:
         type: string
         default: ''
       php_versions:
-        description: 'JSON array of PHP versions for PHPUnit matrix'
+        description: 'JSON PHP versions; in automatic mode, restricts each target to the requested supported versions'
         required: false
         type: string
         default: ''
       moodle_versions:
-        description: 'JSON array of Moodle refs for PHPUnit matrix'
+        description: 'Optional JSON Moodle ref override for one-off plugin versions'
         required: false
         type: string
         default: ''
       moodle_repositories:
-        description: 'JSON array of Moodle repositories for PHPUnit matrix'
+        description: 'Optional JSON core repository override'
         required: false
         type: string
         default: ''
       os:
-        description: 'JSON array of runner labels for PHPUnit matrix'
+        description: 'Optional JSON runner label override'
         required: false
         type: string
         default: ''
@@ -54,12 +64,12 @@ on:
         type: string
         default: ''
       experimental:
-        description: 'JSON array of experimental flags for PHPUnit matrix'
+        description: 'Optional JSON experimental flag override'
         required: false
         type: string
         default: ''
       exclude_matrix:
-        description: 'JSON array of matrix exclusions'
+        description: 'Optional JSON array of matrix exclusions'
         required: false
         type: string
         default: ''
@@ -146,20 +156,12 @@ jobs:
       pull_request_head_sha: ${{ steps.command.outputs.pull_request_head_sha }}
       behat_tags: ${{ steps.command.outputs.behat_tags }}
       behat_tag_arguments: ${{ steps.command.outputs.behat_tag_arguments }}
-      php_versions: ${{ steps.config.outputs.php_versions }}
-      moodle_versions: ${{ steps.config.outputs.moodle_versions }}
-      moodle_repositories: ${{ steps.config.outputs.moodle_repositories }}
-      os: ${{ steps.config.outputs.os }}
-      db_types: ${{ steps.config.outputs.db_types }}
-      experimental: ${{ steps.config.outputs.experimental }}
-      exclude_matrix: ${{ steps.config.outputs.exclude_matrix }}
-      dependencies: ${{ steps.config.outputs.dependencies }}
+      checkout_ref: ${{ steps.plugin-sha.outputs.sha }}
       test_matrix: ${{ steps.matrix.outputs.test_matrix }}
       has_tests: ${{ steps.matrix.outputs.has_tests }}
     steps:
       - name: Validate GitHub App configuration
         id: app-config
-        if: ${{ inputs.post_commands_comment == 'true' && github.event_name == 'pull_request' && github.event.action == 'opened' }}
         shell: bash
         run: |
           if [ -z "$MOODLE_CI_APP_ID_VALUE" ] && [ "$HAS_GITHUB_APP_PRIVATE_KEY" != "true" ]; then
@@ -188,6 +190,7 @@ jobs:
         with:
           app-id: ${{ env.MOODLE_CI_APP_ID_VALUE }}
           private-key: ${{ secrets.MOODLE_CI_APP_PRIVATE_KEY }}
+          owner: ${{ inputs.org || vars.MOODLE_ORG || github.repository_owner }}
           permission-contents: read
           permission-issues: write
           permission-pull-requests: write
@@ -200,7 +203,7 @@ jobs:
           echo "::warning::Could not create GitHub App token; falling back to GITHUB_TOKEN."
 
       - name: Warn about GitHub App private key variable
-        if: ${{ inputs.post_commands_comment == 'true' && github.event_name == 'pull_request' && github.event.action == 'opened' && steps.app-config.outputs.has_app != 'true' && vars.MOODLE_CI_APP_PRIVATE_KEY != '' }}
+        if: ${{ steps.app-config.outputs.has_app != 'true' && vars.MOODLE_CI_APP_PRIVATE_KEY != '' }}
         shell: bash
         run: |
           echo "::warning::MOODLE_CI_APP_PRIVATE_KEY must be configured as an Actions secret, not an Actions variable."
@@ -217,7 +220,8 @@ jobs:
         id: config
         uses: actions/github-script@v8
         env:
-          PHP_VERSIONS: ${{ inputs.php_versions || vars.MOODLE_SUPPORTED_PHP_VERSIONS || '' }}
+          AUTOMATIC: ${{ inputs.automatic }}
+          PHP_VERSIONS: ${{ inputs.php_versions || (inputs.automatic != 'true' && vars.MOODLE_SUPPORTED_PHP_VERSIONS) || '' }}
           MOODLE_VERSIONS: ${{ inputs.moodle_versions || vars.MOODLE_SUPPORTED_VERSIONS || '' }}
           MOODLE_REPOSITORIES: ${{ inputs.moodle_repositories || vars.MOODLE_REPOS || '' }}
           OS: ${{ inputs.os || vars.MOODLE_OS || '' }}
@@ -245,37 +249,6 @@ jobs:
               return fallback;
             };
 
-            const parseOptionalArray = (name, value) => {
-              const raw = String(value || '').trim();
-              if (!raw) {
-                return [];
-              }
-
-              try {
-                const parsed = JSON.parse(raw);
-                if (Array.isArray(parsed)) {
-                  return parsed;
-                }
-                core.warning(`${name} must be a JSON array. Falling back to [].`);
-              } catch (error) {
-                core.warning(`${name} is not valid JSON: ${error.message}. Falling back to [].`);
-              }
-              return [];
-            };
-
-            const normalizeExcludeMatrix = value => parseOptionalArray('MOODLE_EXCLUDE_MATRIX', value).map(entry => {
-              if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
-                return entry;
-              }
-
-              const normalized = { ...entry };
-              if (Object.prototype.hasOwnProperty.call(normalized, 'moodle_repos') && !Object.prototype.hasOwnProperty.call(normalized, 'moodle_repository')) {
-                normalized.moodle_repository = normalized.moodle_repos;
-                delete normalized.moodle_repos;
-              }
-              return normalized;
-            });
-
             const parseDependencies = value => {
               const raw = String(value || '').trim();
               if (!raw) {
@@ -300,16 +273,54 @@ jobs:
               }
             };
 
+            const parseOptionalArray = (name, value) => {
+              if (!String(value || '').trim()) return [];
+              try {
+                const parsed = JSON.parse(value);
+                if (Array.isArray(parsed)) return parsed;
+              } catch (error) {
+                core.warning(`${name} is not valid JSON: ${error.message}. Falling back to [].`);
+                return [];
+              }
+              core.warning(`${name} must be a JSON array. Falling back to [].`);
+              return [];
+            };
+
+            const parsePhpFilter = value => {
+              if (!String(value || '').trim()) return [];
+              let parsed;
+              try {
+                parsed = JSON.parse(value);
+              } catch (error) {
+                throw new Error(`MOODLE_SUPPORTED_PHP_VERSIONS must be a JSON array: ${error.message}`);
+              }
+              if (!Array.isArray(parsed) || !parsed.length || parsed.some(php => typeof php !== 'string' || !/^\d+\.\d+$/.test(php))) {
+                throw new Error('MOODLE_SUPPORTED_PHP_VERSIONS must be a non-empty JSON array of PHP versions such as ["8.3","8.4"]');
+              }
+              return parsed;
+            };
+
+            if (!['true', 'false'].includes(process.env.AUTOMATIC)) {
+              throw new Error("automatic must be 'true' or 'false'");
+            }
+            const automatic = process.env.AUTOMATIC === 'true';
+
             const resolved = {
-              php_versions: parseArray('MOODLE_SUPPORTED_PHP_VERSIONS', process.env.PHP_VERSIONS, ['8.4']),
-              moodle_versions: parseArray('MOODLE_SUPPORTED_VERSIONS', process.env.MOODLE_VERSIONS, ['MOODLE_502_STABLE']),
-              moodle_repositories: parseArray('MOODLE_REPOS', process.env.MOODLE_REPOSITORIES, ['moodle/moodle']),
-              os: parseArray('MOODLE_OS', process.env.OS, ['ubuntu-latest']),
+              php_versions: automatic ? parsePhpFilter(process.env.PHP_VERSIONS) : parseArray('MOODLE_SUPPORTED_PHP_VERSIONS', process.env.PHP_VERSIONS, ['8.4']),
+              moodle_versions: automatic ? [] : parseArray('MOODLE_SUPPORTED_VERSIONS', process.env.MOODLE_VERSIONS, ['MOODLE_502_STABLE']),
+              moodle_repositories: automatic ? [] : parseArray('MOODLE_REPOS', process.env.MOODLE_REPOSITORIES, ['moodle/moodle']),
+              os: automatic ? [] : parseArray('MOODLE_OS', process.env.OS, ['ubuntu-latest']),
               db_types: parseArray('MOODLE_DB_TYPES', process.env.DB_TYPES, ['mysqli']),
-              experimental: parseArray('MOODLE_EXPERIMENTAL', process.env.EXPERIMENTAL, [false]),
-              exclude_matrix: normalizeExcludeMatrix(process.env.EXCLUDE_MATRIX),
+              experimental: automatic ? [] : parseArray('MOODLE_EXPERIMENTAL', process.env.EXPERIMENTAL, [false]),
+              exclude_matrix: automatic ? [] : parseOptionalArray('MOODLE_EXCLUDE_MATRIX', process.env.EXCLUDE_MATRIX),
               dependencies: parseDependencies(process.env.DEPENDENCIES),
             };
+            if (automatic) {
+              core.notice('Automatic matrix enabled: ignoring legacy matrix variables. Explicit php_versions filters catalogue ranges; database, dependency and suite settings remain active.');
+            }
+            if (resolved.db_types.some(db => !['mysqli', 'pgsql', 'sqlsrv'].includes(db))) {
+              throw new Error('MOODLE_DB_TYPES must contain only mysqli, pgsql or sqlsrv');
+            }
 
             let shouldRun = true;
             let skipReason = '';
@@ -332,18 +343,16 @@ jobs:
               }
             }
 
-            core.info(`Resolved ${resolved.php_versions.length} PHP version(s), ${resolved.moodle_versions.length} Moodle ref(s), ${resolved.moodle_repositories.length} Moodle repository value(s), ${resolved.db_types.length} database type(s).`);
+            core.info(`Resolved ${resolved.db_types.length} database type(s); ${automatic ? 'automatic catalogue' : 'legacy variables'} matrix mode.`);
 
             core.setOutput('should_run', String(shouldRun));
             core.setOutput('skip_reason', skipReason);
-            core.setOutput('php_versions', JSON.stringify(resolved.php_versions));
-            core.setOutput('moodle_versions', JSON.stringify(resolved.moodle_versions));
-            core.setOutput('moodle_repositories', JSON.stringify(resolved.moodle_repositories));
-            core.setOutput('os', JSON.stringify(resolved.os));
+            core.setOutput('automatic', String(automatic));
             core.setOutput('db_types', JSON.stringify(resolved.db_types));
-            core.setOutput('experimental', JSON.stringify(resolved.experimental));
-            core.setOutput('exclude_matrix', JSON.stringify(resolved.exclude_matrix));
             core.setOutput('dependencies', resolved.dependencies.join(' '));
+            for (const name of ['php_versions', 'moodle_versions', 'moodle_repositories', 'os', 'experimental', 'exclude_matrix']) {
+              core.setOutput(name, JSON.stringify(resolved[name]));
+            }
 
       - name: Parse comment command
         id: command
@@ -398,15 +407,58 @@ jobs:
               }
             }
 
+      - name: Resolve plugin checkout ref and branch
+        id: target
+        uses: actions/github-script@v8
+        env:
+          EXPLICIT_PR: ${{ inputs.pull_request_number }}
+        with:
+          script: |
+            let number = context.payload.pull_request?.number ||
+              (context.payload.issue?.pull_request ? context.payload.issue.number : '') ||
+              process.env.EXPLICIT_PR;
+            if (number) {
+              number = Number(number);
+              if (!Number.isInteger(number) || number < 1) throw new Error('Invalid pull request number');
+              const { data: pull } = await github.rest.pulls.get({ ...context.repo, pull_number: number });
+              core.setOutput('checkout_ref', `refs/pull/${number}/merge`);
+              core.setOutput('branch', pull.base.ref);
+            } else {
+              if (context.eventName === 'issue_comment') {
+                core.setOutput('checkout_ref', context.sha);
+                core.setOutput('branch', context.ref.replace('refs/heads/', ''));
+              } else {
+                core.setOutput('checkout_ref', context.sha);
+                core.setOutput('branch', context.ref.startsWith('refs/heads/') ? context.ref.slice(11) : context.ref);
+              }
+            }
+
+      - name: Check out plugin revision for matrix resolution
+        if: ${{ github.event_name != 'issue_comment' || steps.command.outputs.is_behat_comment == 'true' }}
+        id: plugin-checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.target.outputs.checkout_ref }}
+          path: plugin-src
+          persist-credentials: false
+
+      - name: Pin tested plugin revision
+        id: plugin-sha
+        if: ${{ steps.plugin-checkout.outcome == 'success' }}
+        shell: bash
+        run: echo "sha=$(git -C plugin-src rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
       - name: Build test matrix
         id: matrix
         uses: actions/github-script@v8
         env:
+          DB_TYPES: ${{ steps.config.outputs.db_types }}
+          AUTOMATIC: ${{ steps.config.outputs.automatic }}
+          PRODUCTS: ${{ inputs.products }}
           PHP_VERSIONS: ${{ steps.config.outputs.php_versions }}
           MOODLE_VERSIONS: ${{ steps.config.outputs.moodle_versions }}
           MOODLE_REPOSITORIES: ${{ steps.config.outputs.moodle_repositories }}
           OS: ${{ steps.config.outputs.os }}
-          DB_TYPES: ${{ steps.config.outputs.db_types }}
           EXPERIMENTAL: ${{ steps.config.outputs.experimental }}
           EXCLUDE_MATRIX: ${{ steps.config.outputs.exclude_matrix }}
           DEPENDENCIES: ${{ steps.config.outputs.dependencies }}
@@ -415,18 +467,10 @@ jobs:
           BEHAT_ON_PULL_REQUEST: ${{ inputs.behat_on_pull_request }}
           IS_STABLE_PUSH: ${{ steps.command.outputs.is_stable_push }}
           IS_BEHAT_COMMENT: ${{ steps.command.outputs.is_behat_comment }}
+          BASE_BRANCH: ${{ steps.target.outputs.branch }}
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
         with:
           script: |
-            const parse = value => JSON.parse(value || '[]');
-            const phpVersions = parse(process.env.PHP_VERSIONS);
-            const moodleVersions = parse(process.env.MOODLE_VERSIONS);
-            const moodleRepositories = parse(process.env.MOODLE_REPOSITORIES);
-            const osList = parse(process.env.OS);
-            const dbTypes = parse(process.env.DB_TYPES);
-            const experimentalValues = parse(process.env.EXPERIMENTAL);
-            const excludes = parse(process.env.EXCLUDE_MATRIX);
-            const dependencies = process.env.DEPENDENCIES || '';
-
             const eventName = context.eventName;
             const runPhpunit = process.env.RUN_PHPUNIT === 'true' && ['pull_request', 'push', 'workflow_dispatch'].includes(eventName);
             const runBehat = process.env.RUN_BEHAT === 'true' && (
@@ -436,37 +480,36 @@ jobs:
               process.env.IS_BEHAT_COMMENT === 'true'
             );
 
-            const matchesExclude = row => excludes.some(exclude => Object.entries(exclude).every(([key, value]) => row[key] === value));
-            const rows = [];
-            const addSuiteRows = suite => {
-              for (const php of phpVersions) {
-                for (const moodle of moodleVersions) {
-                  for (const moodle_repository of moodleRepositories) {
-                    for (const os of osList) {
-                      for (const dbtype of dbTypes) {
-                        if (suite === 'behat' && !['mysqli', 'pgsql'].includes(dbtype)) {
-                          continue;
-                        }
-                        for (const experimental of experimentalValues) {
-                          const row = { suite, php, moodle, moodle_repository, os, dbtype, experimental, dependencies };
-                          if (!matchesExclude(row)) {
-                            rows.push(row);
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
+            const suites = [runPhpunit && 'phpunit', runBehat && 'behat'].filter(Boolean);
+            let rows = [];
+            if (suites.length) {
+              const resolver = require(`${process.env.GITHUB_WORKSPACE}/.moodle-test-action/.github/scripts/resolve-matrix.js`);
+              const dbTypes = JSON.parse(process.env.DB_TYPES);
+              const dependencies = process.env.DEPENDENCIES || '';
+              let result;
+              if (process.env.AUTOMATIC === 'true') {
+                result = await resolver.resolve({ github, appToken: process.env.APP_TOKEN, context,
+                  branch: process.env.BASE_BRANCH, dbTypes, suites, dependencies,
+                  phpVersions: JSON.parse(process.env.PHP_VERSIONS),
+                  products: process.env.PRODUCTS ? JSON.parse(process.env.PRODUCTS) : undefined,
+                  cataloguePath: `${process.env.GITHUB_WORKSPACE}/.moodle-test-action/.github/moodle-test-targets.json`,
+                  versionPath: `${process.env.GITHUB_WORKSPACE}/plugin-src/version.php`,
+                });
+              } else {
+                result = resolver.legacyRows({
+                  phpVersions: JSON.parse(process.env.PHP_VERSIONS),
+                  moodleVersions: JSON.parse(process.env.MOODLE_VERSIONS),
+                  repositories: JSON.parse(process.env.MOODLE_REPOSITORIES),
+                  os: JSON.parse(process.env.OS),
+                  dbTypes, experimental: JSON.parse(process.env.EXPERIMENTAL),
+                  excludes: JSON.parse(process.env.EXCLUDE_MATRIX), suites, dependencies,
+                });
               }
-            };
-
-            if (runPhpunit) {
-              addSuiteRows('phpunit');
+              rows = result.rows;
+              core.summary.addHeading('Resolved Moodle CI targets');
+              core.summary.addCodeBlock(result.description);
+              await core.summary.write();
             }
-            if (runBehat) {
-              addSuiteRows('behat');
-            }
-
             core.info(`Generated ${rows.length} test matrix row(s).`);
             core.setOutput('has_tests', String(rows.length > 0));
             core.setOutput('test_matrix', JSON.stringify({ include: rows }));
@@ -692,6 +735,7 @@ jobs:
         uses: ./.moodle-test-action/behat-test
         with:
           pull_request_number: ${{ inputs.pull_request_number || needs.setup.outputs.pull_request_number }}
+          checkout_ref: ${{ needs.setup.outputs.checkout_ref }}
           moodle: ${{ matrix.moodle }}
           php: ${{ matrix.php }}
           dbtype: ${{ matrix.dbtype }}
@@ -706,22 +750,6 @@ jobs:
           status_sha: ${{ needs.setup.outputs.is_behat_comment == 'true' && needs.setup.outputs.pull_request_head_sha || '' }}
           status_context: ${{ needs.setup.outputs.is_behat_comment == 'true' && format('Moodle CI / behat on demand ({0}, {1}, {2}, {3})', matrix.php, matrix.moodle, matrix.moodle_repository, matrix.dbtype) || '' }}
           status_tags: ${{ needs.setup.outputs.behat_tags }}
-
-      - name: Resolve plugin checkout ref
-        if: ${{ matrix.suite == 'phpunit' }}
-        id: checkout_ref
-        uses: actions/github-script@v8
-        with:
-          script: |
-            if (context.eventName === 'pull_request') {
-              core.setOutput('ref', `refs/pull/${context.payload.pull_request.number}/merge`);
-              return;
-            }
-            if (context.eventName === 'issue_comment') {
-              core.setOutput('ref', `refs/pull/${context.payload.issue.number}/merge`);
-              return;
-            }
-            core.setOutput('ref', context.ref);
 
       - name: Run PHPUnit tests
         if: ${{ matrix.suite == 'phpunit' }}
@@ -740,4 +768,4 @@ jobs:
           experimental: ${{ matrix.experimental }}
           PRIVATE_REPO_TOKEN: ${{ steps.app-token.outputs.token }}
           fail_on_empty_test_suite: ${{ inputs.fail_on_empty_test_suite }}
-          checkout_ref: ${{ steps.checkout_ref.outputs.ref }}
+          checkout_ref: ${{ needs.setup.outputs.checkout_ref }}

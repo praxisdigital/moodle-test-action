@@ -6,7 +6,7 @@ outputs:
     description: 'Whether the event requested Behat with #behat'
     value: ${{ steps.parse.outputs.is_behat_comment }}
   is_stable_push:
-    description: 'Whether the event is a push to main, master, or MOODLE_*_STABLE'
+    description: 'Whether the event is a push to main, master, or a release branch'
     value: ${{ steps.parse.outputs.is_stable_push }}
   pull_request_number:
     description: 'Pull request number for PR/comment events'
@@ -79,7 +79,7 @@ runs:
           const isStablePush = Boolean(pushBranch) && (
             pushBranch === 'main' ||
             pushBranch === 'master' ||
-            /^MOODLE_.*_STABLE$/.test(pushBranch)
+            /^[A-Za-z][A-Za-z0-9-]{3,}(?:_[A-Za-z0-9-]+)*_\d{2,3}_(STABLE|LATEST)$/i.test(pushBranch)
           );
 
           core.setOutput('is_behat_comment', String(isBehatComment));

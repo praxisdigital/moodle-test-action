@@ -13,10 +13,6 @@ on:
   pull_request:
     types: [ opened, reopened, synchronize ]
   push:
-    branches:
-      - main
-      - master
-      - MOODLE_*_STABLE
   issue_comment:
     types: [created]
   workflow_dispatch:
@@ -34,7 +30,7 @@ jobs:
     secrets: inherit
 ```
 
-By default, the reusable workflow keeps the existing input/variable-driven matrix. To trial the automatic resolver in a plugin repository, opt in:
+The reusable workflow uses the automatic resolver by default. No `automatic` input is needed:
 
 ```yaml
 jobs:
@@ -42,13 +38,13 @@ jobs:
     uses: praxisdigital/moodle-test-action/.github/workflows/ci.yml@master
     secrets: inherit
     with:
-      automatic: 'true'
+      db_types: '["mysqli"]'
       # Optional: php_versions: '["8.3", "8.4"]'
       # Optional: products: '["moodle"]' or '["workplace"]' (default: both)
       # Keep db_types, dependencies and optional Behat/service settings as needed.
 ```
 
-In automatic mode the matrix comes from [the central target catalogue](.github/moodle-test-targets.json) and the plugin revision's `version.php`. Once it is proven in production, callers normally need only database types, dependencies and optional test/service settings.
+The automatic matrix comes from [the central target catalogue](.github/moodle-test-targets.json) and the plugin revision's `version.php`. Callers normally need only database types, dependencies and optional test/service settings. Set `automatic: 'false'` explicitly to use the legacy matrix and its one-off overrides.
 
 Examples:
 
@@ -57,7 +53,7 @@ Examples:
 
 ## Defaults
 
-With `automatic: 'false'` (the default), the original matrix settings resolve in this order:
+With `automatic: 'false'`, the original matrix settings resolve in this order:
 
 ```text
 workflow input -> repository/organization action variable -> built-in fallback
@@ -67,13 +63,15 @@ The legacy fallbacks remain Moodle 5.2, PHP 8.4, `moodle/moodle`, `ubuntu-latest
 
 ## Automatic Moodle matrix
 
-The central [JSON catalogue](.github/moodle-test-targets.json) is the list of **applicable** test targets. Moodle and Workplace both include 4.1, 4.4, 4.5, 5.0 and 5.2; Workplace uses `WORKPLACE_*_LATEST` refs, not the numbered or rolling branches. Each entry couples a release, product, exact core repository/ref, and inclusive `php_min`/`php_max` versions. All PHP minor versions between those bounds are tested; for example `8.2`–`8.4` generates 8.2, 8.3 and 8.4. Set `version_file: "public/version.php"` for core branches using Moodle's new `public/` layout (otherwise the root file is used). Update the catalogue once to add a newly applicable release (such as 5.3) or adjust its supported PHP range. Do not add all upstream stable branches automatically. The private Workplace fork's PHP support and version-file paths still need verification with App access.
+The central [JSON catalogue](.github/moodle-test-targets.json) defines available test targets. Moodle has 4.0–4.5 and 5.0–5.2; Workplace has 4.1, 4.3–4.5 and 5.0–5.2, using `WORKPLACE_*_LATEST` rather than numbered or rolling refs. No Workplace 4.0 or 4.2 ref has been confirmed, so those targets are not invented. Each entry couples a release, product, exact core repository/ref, `required` flag and inclusive `php_min`/`php_max` versions. All PHP minor versions between those bounds are tested; for example `8.2`–`8.4` generates 8.2, 8.3 and 8.4. Set `version_file: "public/version.php"` for core branches using Moodle's new `public/` layout (otherwise the root file is used). Update the catalogue once to add a newly applicable release (such as 5.3) or adjust its supported PHP range. The private Workplace fork's PHP support and version-file paths still need verification with App access.
 
-For a PR, setup reads `version.php` from the PR **merge ref** and uses the PR's base branch; for a push it uses that commit and branch. Plugin release branches partition **both products'** catalogues by version: `MOODLE_41_STABLE` owns applicable Moodle *and* Workplace releases from 4.1 up to (but not including) the next release branch in that plugin repository. The branch prefix is not a product restriction. `41`/`401` and `50`/`500` normalize to the same releases. Workplace `*_LATEST` branches are also recognized. The first branch-name segment must be at least four characters, so issue branches beginning `mma_`, `tk_`, or `abc_` do not create release boundaries. PRs into **any** branch still run; non-release branches test the newest applicable target of each selected product. Both products require a readable core ref, so private Workplace tests need GitHub App access even when the plugin branch starts `MOODLE_`.
+For a PR, setup reads `version.php` from the PR **merge ref** and uses the PR's base branch; for a push it uses that commit and branch. Plugin release branches partition **both products'** catalogues by version: `MOODLE_41_STABLE` owns releases from 4.1 up to (but not including) the next release branch in that plugin repository. The branch prefix is not a product restriction. `41`/`401` and `50`/`500` normalize to the same releases. Workplace `*_LATEST` branches are also recognized. The first branch-name segment must be at least four characters, so issue branches beginning `mma_`, `tk_`, or `abc_` do not create release boundaries. PRs into **any** branch still run. Both products require a readable core ref, so private Workplace tests need GitHub App access even when the plugin branch starts `MOODLE_`.
 
-The tested revision's `$plugin->requires`, `$plugin->supported` and `$plugin->incompatible` further filter the selection. Literal values are read without running plugin PHP. Core `version.php` is checked at each selected ref to enforce the required version. When compatibility cannot be inferred safely, setup fails with an explanation rather than generating a misleading matrix. Without an explicit upper bound in plugin metadata, tests are the final check for compatibility with newer releases.
+Within its branch range, the resolver tests the **first version compatible with the plugin's `version.php` for each product** (the baseline), even if that target has `required: false`. It also tests later compatible targets marked `required: true`. Optional intervening releases do not run. The current required milestones are 4.1, 4.5, 5.0 and 5.2; 4.0, 4.2, 4.3, 4.4 and 5.1 remain available as baselines. For example, a 5.1 plugin branch between 5.0 and 5.2 tests only 5.1, while a 4.1 branch followed by 4.5 tests only 4.1. Non-release branches use the same baseline-plus-required policy without a plugin-branch range.
 
-**One-off overrides remain available in legacy mode.** `with: moodle_versions`, `moodle_repositories`, `php_versions`, `os`, `experimental`, and `exclude_matrix` (or their existing `MOODLE_SUPPORTED_VERSIONS`, `MOODLE_REPOS`, `MOODLE_SUPPORTED_PHP_VERSIONS`, `MOODLE_OS`, `MOODLE_EXPERIMENTAL`, and `MOODLE_EXCLUDE_MATRIX` variables) retain their JSON-array format and Cartesian-product behavior. To test an unlisted version or an exceptional combination, leave `automatic` as `'false'` and supply the required overrides. Switch back to `'true'` to test the catalogue regardless of old org/repo Moodle-ref and repository variables; there is no need to delete them. Database types and dependencies keep their previous inputs/variables in either mode.
+The tested revision's `$plugin->requires`, `$plugin->supported` and `$plugin->incompatible` further filter the selection. Literal values are read without running plugin PHP. Core `version.php` is checked at each candidate ref to establish compatibility; the branch name does not override `version.php`. If no compatible target remains, setup fails. Without an explicit upper bound in plugin metadata, tests are the final check for compatibility with newer releases.
+
+**One-off overrides remain available in legacy mode.** `with: moodle_versions`, `moodle_repositories`, `php_versions`, `os`, `experimental`, and `exclude_matrix` (or their existing `MOODLE_SUPPORTED_VERSIONS`, `MOODLE_REPOS`, `MOODLE_SUPPORTED_PHP_VERSIONS`, `MOODLE_OS`, `MOODLE_EXPERIMENTAL`, and `MOODLE_EXCLUDE_MATRIX` variables) retain their JSON-array format and Cartesian-product behavior. To test an unlisted version or an exceptional combination, set `automatic: 'false'` and supply the required overrides. Remove that input (or set it back to `'true'`) to use the catalogue regardless of old org/repo Moodle-ref and repository variables; there is no need to delete them. Database types and dependencies keep their previous inputs/variables in either mode.
 
 Plugin component and install path are auto-detected from `$plugin->component` in `version.php`. Use `plugin_component` or `plugin_path` only for unusual plugins.
 

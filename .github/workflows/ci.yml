@@ -4,10 +4,10 @@ on:
   workflow_call:
     inputs:
       automatic:
-        description: 'Use the central catalogue and plugin version.php for matrix generation; ignore legacy matrix overrides'
+        description: 'Use the central catalogue and plugin version.php for matrix generation (set false for legacy matrix overrides)'
         required: false
         type: string
-        default: 'false'
+        default: 'true'
       products:
         description: 'Optional JSON array of products to test in automatic mode: moodle and/or workplace (defaults to both)'
         required: false

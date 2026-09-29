@@ -51,9 +51,11 @@ const phpRange = (minimum, maximum) => {
 const validateCatalogue = data => {
   if (!data || !Array.isArray(data.targets) || !data.targets.length) throw new Error('Catalogue needs a non-empty targets array');
   const keys = new Set();
+  const requiredByRelease = new Map();
   return data.targets.map(target => {
     const release = releaseNumber(target.release);
     if (!['moodle', 'workplace'].includes(target.product) ||
+        typeof target.required !== 'boolean' ||
         !/^[\w.-]+\/[\w.-]+$/.test(target.repository) ||
         !/^[A-Za-z0-9_.-]+$/.test(target.ref) ||
         (target.version_file && !['version.php', 'public/version.php'].includes(target.version_file))) {
@@ -62,6 +64,10 @@ const validateCatalogue = data => {
     const key = `${target.product}:${release}`;
     if (keys.has(key)) throw new Error(`Duplicate catalogue target: ${key}`);
     keys.add(key);
+    if (requiredByRelease.has(release) && requiredByRelease.get(release) !== target.required) {
+      throw new Error(`Conflicting required flags for release ${target.release}`);
+    }
+    requiredByRelease.set(release, target.required);
     return { ...target, number: release, php: phpRange(target.php_min, target.php_max) };
   });
 };
@@ -98,11 +104,6 @@ const selectTargets = (catalogue, branches, base, metadata, products = ['moodle'
 
   let selected = candidates;
   if (current) {
-    for (const product of chosenProducts) {
-      if (!candidates.some(target => target.product === product && target.number === current.release)) {
-        throw new Error(`Release branch ${base} has no ${product} target in the catalogue`);
-      }
-    }
     const next = Math.min(Infinity, ...parsed
       .filter(branch => branch.release > current.release)
       .map(branch => branch.release));
@@ -112,17 +113,23 @@ const selectTargets = (catalogue, branches, base, metadata, products = ['moodle'
   selected = selected.filter(target =>
     (!metadata.supported || (target.number >= metadata.supported[0] && target.number <= metadata.supported[1])) &&
     (!metadata.incompatible || target.number < metadata.incompatible));
-  if (current && chosenProducts.some(product => !selected.some(target => target.product === product && target.number === current.release))) {
-    throw new Error(`${base} is excluded by this revision's supported/incompatible version.php range`);
-  }
-  if (!current && selected.length) {
-    // Development branches have no ownership range: test the newest compatible
-    // target of each product, not every historical version in the catalogue.
-    selected = chosenProducts.map(product => selected
-      .filter(target => target.product === product)
-      .reduce((latest, target) => target.number > latest.number ? target : latest));
-  }
   return selected.sort((a, b) => a.number - b.number || chosenProducts.indexOf(a.product) - chosenProducts.indexOf(b.product));
+};
+
+// The first version.php-compatible release is the baseline for each product.
+// Later releases only run when the catalogue marks them as required.
+const selectRequiredTargets = (targets, coreVersions, requires) => {
+  const baselines = new Set();
+  return targets.filter(target => {
+    const coreVersion = coreVersions[`${target.repository}@${target.ref}`];
+    if (!Number.isFinite(coreVersion)) throw new Error(`Missing core version for ${target.repository}@${target.ref}`);
+    if (coreVersion < requires) return false;
+    if (!baselines.has(target.product)) {
+      baselines.add(target.product);
+      return true;
+    }
+    return target.required;
+  });
 };
 
 const buildRows = (targets, dbTypes, suites, dependencies, coreVersions, phpVersions = []) => {
@@ -207,14 +214,11 @@ const resolve = async ({ github, appToken, context, branch, dbTypes, suites, dep
     if (!version) throw new Error(`Cannot read core $version at ${target.repository}@${target.ref}`);
     coreVersions[`${target.repository}@${target.ref}`] = Number(version[1]);
   }
-  const compatible = targets.filter(target => coreVersions[`${target.repository}@${target.ref}`] >= metadata.requires);
-  if (!compatible.length) throw new Error(`No ${branch} catalogue targets meet plugin requires ${metadata.requires}`);
-  if (releaseBranch(branch) && compatible.length !== targets.length) {
-    throw new Error(`${branch} owns targets whose core version is below plugin requires ${metadata.requires}; update version.php or the catalogue`);
-  }
-  const rows = buildRows(compatible, dbTypes, suites, dependencies, coreVersions, phpVersions);
-  return { targets: compatible, rows, metadata,
-    description: compatible.map(t => `${t.product} ${t.release}: ${t.repository}@${t.ref} (PHP ${phpVersions.length ? phpVersions.filter(php => t.php.includes(php)).join(', ') : `${t.php_min}–${t.php_max}`})`).join('\n') };
+  const selected = selectRequiredTargets(targets, coreVersions, metadata.requires);
+  if (!selected.length) throw new Error(`No ${branch} catalogue targets meet plugin requires ${metadata.requires}`);
+  const rows = buildRows(selected, dbTypes, suites, dependencies, coreVersions, phpVersions);
+  return { targets: selected, rows, metadata,
+    description: selected.map(t => `${t.product} ${t.release}: ${t.repository}@${t.ref} (PHP ${phpVersions.length ? phpVersions.filter(php => t.php.includes(php)).join(', ') : `${t.php_min}–${t.php_max}`})`).join('\n') };
 };
 
-module.exports = { releaseNumber, branchNumber, releaseBranch, phpRange, validateCatalogue, readMetadata, selectTargets, buildRows, legacyRows, resolve };
+module.exports = { releaseNumber, branchNumber, releaseBranch, phpRange, validateCatalogue, readMetadata, selectTargets, selectRequiredTargets, buildRows, legacyRows, resolve };

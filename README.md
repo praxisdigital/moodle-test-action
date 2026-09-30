@@ -48,8 +48,13 @@ The automatic matrix comes from [the central target catalogue](.github/moodle-te
 
 Examples:
 
-- [Basic workflow](.github/workflows/example.yml)
-- [Workflow with static dependencies](.github/workflows/example-static-dependendies.yml)
+- [Basic workflow](examples/ci.yml)
+- [Workflow with static dependencies](examples/ci-with-dependencies.yml)
+
+These are templates, not active workflows in this repository. Only
+[`validate-resolver.yml`](.github/workflows/validate-resolver.yml) runs here; on
+pull requests, pushes to `master`, or manual dispatch it runs `npm test` and
+checks workflow syntax with a pinned `actionlint` binary.
 
 ## Defaults
 

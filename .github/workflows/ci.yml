@@ -157,6 +157,10 @@ jobs:
       behat_tags: ${{ steps.command.outputs.behat_tags }}
       behat_tag_arguments: ${{ steps.command.outputs.behat_tag_arguments }}
       checkout_ref: ${{ steps.plugin-sha.outputs.sha }}
+      behat_arguments: ${{ steps.matrix.outputs.behat_arguments }}
+      behat_increase_timeout: ${{ steps.matrix.outputs.behat_increase_timeout }}
+      behat_step_timeout_minutes: ${{ steps.matrix.outputs.behat_step_timeout_minutes }}
+      post_no_tests_comment: ${{ steps.matrix.outputs.post_no_tests_comment }}
       test_matrix: ${{ steps.matrix.outputs.test_matrix }}
       has_tests: ${{ steps.matrix.outputs.has_tests }}
     steps:
@@ -216,6 +220,10 @@ jobs:
           path: .moodle-test-action
           persist-credentials: false
 
+      - name: Parse comment command
+        id: command
+        uses: ./.moodle-test-action/comment-parser
+
       - name: Resolve CI configuration
         id: config
         uses: actions/github-script@v8
@@ -229,8 +237,23 @@ jobs:
           EXPERIMENTAL: ${{ inputs.experimental || vars.MOODLE_EXPERIMENTAL || '' }}
           EXCLUDE_MATRIX: ${{ inputs.exclude_matrix || vars.MOODLE_EXCLUDE_MATRIX || '' }}
           DEPENDENCIES: ${{ inputs.dependencies || vars.MOODLE_PLUGIN_DEPENDENCIES || '' }}
+          IS_BEHAT_COMMENT: ${{ steps.command.outputs.is_behat_comment }}
         with:
           script: |
+            // A comment starts on the default branch. Do not parse its caller
+            // inputs: the checked-out PR workflow is authoritative instead.
+            if (context.eventName === 'issue_comment' && process.env.IS_BEHAT_COMMENT === 'true') {
+              core.setOutput('should_run', 'true');
+              core.setOutput('skip_reason', '');
+              core.setOutput('automatic', 'true');
+              core.setOutput('db_types', '["mysqli"]');
+              core.setOutput('dependencies', '');
+              for (const name of ['php_versions', 'moodle_versions', 'moodle_repositories', 'os', 'experimental', 'exclude_matrix']) {
+                core.setOutput(name, '[]');
+              }
+              return;
+            }
+
             const parseArray = (name, value, fallback) => {
               const raw = String(value || '').trim();
               if (!raw) {
@@ -354,10 +377,6 @@ jobs:
               core.setOutput(name, JSON.stringify(resolved[name]));
             }
 
-      - name: Parse comment command
-        id: command
-        uses: ./.moodle-test-action/comment-parser
-
       - name: Comment available CI commands
         if: ${{ inputs.post_commands_comment == 'true' && github.event_name == 'pull_request' && github.event.action == 'opened' }}
         uses: actions/github-script@v8
@@ -423,6 +442,8 @@ jobs:
               const { data: pull } = await github.rest.pulls.get({ ...context.repo, pull_number: number });
               core.setOutput('checkout_ref', `refs/pull/${number}/merge`);
               core.setOutput('branch', pull.base.ref);
+              core.setOutput('same_repo', String(pull.head.repo?.full_name?.toLowerCase() ===
+                `${context.repo.owner}/${context.repo.repo}`.toLowerCase()));
             } else {
               if (context.eventName === 'issue_comment') {
                 core.setOutput('checkout_ref', context.sha);
@@ -448,6 +469,32 @@ jobs:
         shell: bash
         run: echo "sha=$(git -C plugin-src rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
+      - name: Install YAML parser for PR command configuration
+        if: ${{ github.event_name == 'issue_comment' && steps.command.outputs.is_behat_comment == 'true' }}
+        working-directory: .moodle-test-action
+        run: npm ci --ignore-scripts --omit=dev --no-audit --no-fund
+
+      - name: Read PR workflow inputs for #behat
+        id: pr-config
+        if: ${{ github.event_name == 'issue_comment' && steps.command.outputs.is_behat_comment == 'true' }}
+        uses: actions/github-script@v8
+        env:
+          SAME_REPOSITORY: ${{ steps.target.outputs.same_repo }}
+          DEFAULT_ACTION_REF: ${{ inputs.action_ref }}
+        with:
+          script: |
+            if (process.env.SAME_REPOSITORY !== 'true') {
+              throw new Error('#behat with private repository credentials requires a same-repository PR; fork PR workflows are untrusted.');
+            }
+            const { readPrWorkflow } = require(`${process.env.GITHUB_WORKSPACE}/.moodle-test-action/.github/scripts/pr-workflow-config.js`);
+            const file = `${process.env.GITHUB_WORKSPACE}/plugin-src/.github/workflows/ci.yml`;
+            const values = readPrWorkflow(file);
+            if (values.action_ref && values.action_ref !== process.env.DEFAULT_ACTION_REF) {
+              throw new Error('PR ci.yml action_ref differs from the default-branch caller. A #behat comment cannot change the checked-out central action ref.');
+            }
+            core.info(`Using PR ci.yml inputs: ${Object.keys(values).join(', ') || '(none)'}`);
+            core.setOutput('inputs', JSON.stringify(values));
+
       - name: Build test matrix
         id: matrix
         uses: actions/github-script@v8
@@ -469,11 +516,34 @@ jobs:
           IS_BEHAT_COMMENT: ${{ steps.command.outputs.is_behat_comment }}
           BASE_BRANCH: ${{ steps.target.outputs.branch }}
           APP_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR_INPUTS: ${{ steps.pr-config.outputs.inputs }}
+          VAR_DB_TYPES: ${{ vars.MOODLE_DB_TYPES || '' }}
+          VAR_DEPENDENCIES: ${{ vars.MOODLE_PLUGIN_DEPENDENCIES || '' }}
+          VAR_MOODLE_VERSIONS: ${{ vars.MOODLE_SUPPORTED_VERSIONS || '' }}
+          VAR_MOODLE_REPOSITORIES: ${{ vars.MOODLE_REPOS || '' }}
+          VAR_PHP_VERSIONS: ${{ vars.MOODLE_SUPPORTED_PHP_VERSIONS || '' }}
+          VAR_OS: ${{ vars.MOODLE_OS || '' }}
+          VAR_EXPERIMENTAL: ${{ vars.MOODLE_EXPERIMENTAL || '' }}
+          VAR_EXCLUDE_MATRIX: ${{ vars.MOODLE_EXCLUDE_MATRIX || '' }}
+          VAR_BEHAT_ARGUMENTS: ${{ vars.MOODLE_ADDITIONAL_BEHAT_ARGUMENTS || '' }}
+          DEFAULT_BEHAT_ARGUMENTS: ${{ inputs.additional_behat_arguments || vars.MOODLE_ADDITIONAL_BEHAT_ARGUMENTS || '' }}
+          DEFAULT_BEHAT_TIMEOUT: ${{ inputs.behat_increase_timeout }}
+          DEFAULT_BEHAT_STEP_TIMEOUT: ${{ inputs.behat_step_timeout_minutes }}
+          DEFAULT_POST_NO_TESTS_COMMENT: ${{ inputs.post_no_tests_comment || (steps.command.outputs.is_behat_comment == 'true' && 'true' || 'false') }}
+          DEFAULT_ORG: ${{ inputs.org || vars.MOODLE_ORG || github.repository_owner }}
         with:
           script: |
             const eventName = context.eventName;
             const runPhpunit = process.env.RUN_PHPUNIT === 'true' && ['pull_request', 'push', 'workflow_dispatch'].includes(eventName);
-            const runBehat = process.env.RUN_BEHAT === 'true' && (
+            const prConfig = process.env.PR_INPUTS ? require(`${process.env.GITHUB_WORKSPACE}/.moodle-test-action/.github/scripts/pr-workflow-config.js`)
+              .resolvePrConfig(JSON.parse(process.env.PR_INPUTS), {
+                db_types: process.env.VAR_DB_TYPES, dependencies: process.env.VAR_DEPENDENCIES,
+                moodle_versions: process.env.VAR_MOODLE_VERSIONS, moodle_repositories: process.env.VAR_MOODLE_REPOSITORIES,
+                php_versions: process.env.VAR_PHP_VERSIONS, os: process.env.VAR_OS,
+                experimental: process.env.VAR_EXPERIMENTAL, exclude_matrix: process.env.VAR_EXCLUDE_MATRIX,
+                additional_behat_arguments: process.env.VAR_BEHAT_ARGUMENTS,
+              }, process.env.DEFAULT_ORG) : null;
+            const runBehat = (prConfig?.run_behat || process.env.RUN_BEHAT) === 'true' && (
               eventName === 'workflow_dispatch' ||
               process.env.IS_STABLE_PUSH === 'true' ||
               (eventName === 'pull_request' && process.env.BEHAT_ON_PULL_REQUEST === 'true') ||
@@ -484,25 +554,26 @@ jobs:
             let rows = [];
             if (suites.length) {
               const resolver = require(`${process.env.GITHUB_WORKSPACE}/.moodle-test-action/.github/scripts/resolve-matrix.js`);
-              const dbTypes = JSON.parse(process.env.DB_TYPES);
-              const dependencies = process.env.DEPENDENCIES || '';
+              const dbTypes = prConfig?.db_types || JSON.parse(process.env.DB_TYPES);
+              const dependencies = prConfig?.dependencies ?? (process.env.DEPENDENCIES || '');
               let result;
-              if (process.env.AUTOMATIC === 'true') {
+              if ((prConfig?.automatic || process.env.AUTOMATIC) === 'true') {
                 result = await resolver.resolve({ github, appToken: process.env.APP_TOKEN, context,
                   branch: process.env.BASE_BRANCH, dbTypes, suites, dependencies,
-                  phpVersions: JSON.parse(process.env.PHP_VERSIONS),
-                  products: process.env.PRODUCTS ? JSON.parse(process.env.PRODUCTS) : undefined,
+                  phpVersions: prConfig?.php_versions || JSON.parse(process.env.PHP_VERSIONS),
+                  products: prConfig ? (prConfig.products ? JSON.parse(prConfig.products) : undefined) :
+                    (process.env.PRODUCTS ? JSON.parse(process.env.PRODUCTS) : undefined),
                   cataloguePath: `${process.env.GITHUB_WORKSPACE}/.moodle-test-action/.github/moodle-test-targets.json`,
                   versionPath: `${process.env.GITHUB_WORKSPACE}/plugin-src/version.php`,
                 });
               } else {
                 result = resolver.legacyRows({
-                  phpVersions: JSON.parse(process.env.PHP_VERSIONS),
-                  moodleVersions: JSON.parse(process.env.MOODLE_VERSIONS),
-                  repositories: JSON.parse(process.env.MOODLE_REPOSITORIES),
-                  os: JSON.parse(process.env.OS),
-                  dbTypes, experimental: JSON.parse(process.env.EXPERIMENTAL),
-                  excludes: JSON.parse(process.env.EXCLUDE_MATRIX), suites, dependencies,
+                  phpVersions: prConfig?.php_versions || JSON.parse(process.env.PHP_VERSIONS),
+                  moodleVersions: prConfig?.moodle_versions || JSON.parse(process.env.MOODLE_VERSIONS),
+                  repositories: prConfig?.moodle_repositories || JSON.parse(process.env.MOODLE_REPOSITORIES),
+                  os: prConfig?.os || JSON.parse(process.env.OS),
+                  dbTypes, experimental: prConfig?.experimental || JSON.parse(process.env.EXPERIMENTAL),
+                  excludes: prConfig?.exclude_matrix || JSON.parse(process.env.EXCLUDE_MATRIX), suites, dependencies,
                 });
               }
               rows = result.rows;
@@ -511,6 +582,10 @@ jobs:
               await core.summary.write();
             }
             core.info(`Generated ${rows.length} test matrix row(s).`);
+            core.setOutput('behat_arguments', prConfig?.additional_behat_arguments ?? process.env.DEFAULT_BEHAT_ARGUMENTS);
+            core.setOutput('behat_increase_timeout', prConfig?.behat_increase_timeout || process.env.DEFAULT_BEHAT_TIMEOUT);
+            core.setOutput('behat_step_timeout_minutes', prConfig?.behat_step_timeout_minutes || process.env.DEFAULT_BEHAT_STEP_TIMEOUT);
+            core.setOutput('post_no_tests_comment', prConfig?.post_no_tests_comment || process.env.DEFAULT_POST_NO_TESTS_COMMENT);
             core.setOutput('has_tests', String(rows.length > 0));
             core.setOutput('test_matrix', JSON.stringify({ include: rows }));
 
@@ -741,10 +816,10 @@ jobs:
           dbtype: ${{ matrix.dbtype }}
           moodle_repository: ${{ matrix.moodle_repository }}
           dependencies: ${{ matrix.dependencies }}
-          additional_behat_arguments: ${{ format('{0} {1}', inputs.additional_behat_arguments || vars.MOODLE_ADDITIONAL_BEHAT_ARGUMENTS || '', needs.setup.outputs.behat_tag_arguments) }}
-          behat_increase_timeout: ${{ inputs.behat_increase_timeout }}
-          behat_step_timeout_minutes: ${{ inputs.behat_step_timeout_minutes }}
-          post_no_tests_comment: ${{ inputs.post_no_tests_comment || (needs.setup.outputs.is_behat_comment == 'true' && 'true' || 'false') }}
+          additional_behat_arguments: ${{ format('{0} {1}', needs.setup.outputs.behat_arguments, needs.setup.outputs.behat_tag_arguments) }}
+          behat_increase_timeout: ${{ needs.setup.outputs.behat_increase_timeout }}
+          behat_step_timeout_minutes: ${{ needs.setup.outputs.behat_step_timeout_minutes }}
+          post_no_tests_comment: ${{ needs.setup.outputs.post_no_tests_comment }}
           PRIVATE_REPO_TOKEN: ${{ steps.app-token.outputs.token }}
           status_token: ${{ steps.app-token.outputs.token || github.token }}
           status_sha: ${{ needs.setup.outputs.is_behat_comment == 'true' && needs.setup.outputs.pull_request_head_sha || '' }}

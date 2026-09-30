@@ -1,3 +1,4 @@
+# Copy to a plugin repository as .github/workflows/ci.yml.
 name: Moodle CI
 
 on:

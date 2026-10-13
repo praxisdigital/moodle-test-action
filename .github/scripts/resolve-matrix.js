@@ -230,7 +230,7 @@ const resolve = async ({ github, appToken, context, branch, dbTypes, suites, dep
     }
   }
   const selected = selectRequiredTargets(readableTargets, coreVersions, metadata.requires);
-  if (!selected.length && readableTargets.length) throw new Error(`No ${branch} catalogue targets meet plugin requires ${metadata.requires}`);
+  if (!selected.length) throw new Error(`No ${branch} catalogue targets meet plugin requires ${metadata.requires}`);
   const rows = buildRows(selected, dbTypes, suites, dependencies, coreVersions, phpVersions);
   return { targets: selected, rows, metadata,
     description: selected.map(t => `${t.product} ${t.release}: ${t.repository}@${t.ref} (PHP ${phpVersions.length ? phpVersions.filter(php => t.php.includes(php)).join(', ') : `${t.php_min}–${t.php_max}`})`).join('\n') };

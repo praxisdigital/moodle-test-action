@@ -129,7 +129,7 @@ test('automatic PHP filter intersects each catalogue range without dropping rele
   assert.throws(() => buildRows(selected, ['mysqli'], ['phpunit'], '', versions, ['8.2']), /No requested PHP version supports.*MOODLE_502_STABLE/);
 });
 
-const resolveWithExperimentalTarget = async ({ phpVersions = [], unavailableRef } = {}) => {
+const resolveWithExperimentalTarget = async ({ branch = 'MOODLE_500_STABLE', phpVersions = [], unavailableRef } = {}) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'experimental-matrix-'));
   const cataloguePath = path.join(directory, 'catalogue.json');
   const versionPath = path.join(directory, 'version.php');
@@ -148,7 +148,7 @@ const resolveWithExperimentalTarget = async ({ phpVersions = [], unavailableRef 
           return { data: { type: 'file', content: Buffer.from(`$version = ${coreBuilds[ref === 'MOODLE_500_STABLE' ? '5.0' : '5.3']}.00;`).toString('base64') } };
         } } },
       },
-      context: { repo: { owner: 'example', repo: 'plugin' } }, branch: 'MOODLE_500_STABLE',
+      context: { repo: { owner: 'example', repo: 'plugin' } }, branch,
       dbTypes: ['mysqli'], suites: ['phpunit'], dependencies: '', phpVersions,
       products: ['moodle'], cataloguePath, versionPath, onWarning: message => warnings.push(message),
     });
@@ -175,6 +175,16 @@ test('unavailable experimental core ref is skipped with a warning', async () => 
   assert.match(warnings[0], /Skipping experimental moodle\/moodle@MOODLE_503_STABLE.*HTTP 404/);
   assert.equal(warnings.length, 1);
   await assert.rejects(resolveWithExperimentalTarget({ unavailableRef: 'MOODLE_500_STABLE' }), /HTTP 404/);
+});
+
+test('skipping the only experimental target due to PHP filter fails setup', async () => {
+  await assert.rejects(resolveWithExperimentalTarget({ branch: 'MOODLE_503_STABLE', phpVersions: ['8.2'] }),
+    /No MOODLE_503_STABLE catalogue targets meet plugin requires/);
+});
+
+test('skipping the only experimental target due to unavailable core fails setup', async () => {
+  await assert.rejects(resolveWithExperimentalTarget({ branch: 'MOODLE_503_STABLE', unavailableRef: 'MOODLE_503_STABLE' }),
+    /No MOODLE_503_STABLE catalogue targets meet plugin requires/);
 });
 
 test('invalid catalogue entries and incompatible ranges fail rather than falling back', () => {

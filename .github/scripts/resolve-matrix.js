@@ -56,6 +56,7 @@ const validateCatalogue = data => {
     const release = releaseNumber(target.release);
     if (!['moodle', 'workplace'].includes(target.product) ||
         typeof target.required !== 'boolean' ||
+        (target.experimental !== undefined && typeof target.experimental !== 'boolean') ||
         !/^[\w.-]+\/[\w.-]+$/.test(target.repository) ||
         !/^[A-Za-z0-9_.-]+$/.test(target.ref) ||
         (target.version_file && !['version.php', 'public/version.php'].includes(target.version_file))) {
@@ -145,7 +146,7 @@ const buildRows = (targets, dbTypes, suites, dependencies, coreVersions, phpVers
     for (const suite of suites) for (const php of phpForTarget) for (const dbtype of dbTypes) {
       if (suite === 'behat' && !['mysqli', 'pgsql'].includes(dbtype)) continue;
       rows.push({ suite, php, moodle: target.ref, moodle_repository: target.repository,
-        os: 'ubuntu-latest', dbtype, experimental: false, dependencies });
+        os: 'ubuntu-latest', dbtype, experimental: target.experimental === true, dependencies });
     }
   }
   if (rows.length > 256) throw new Error(`Matrix has ${rows.length} rows (GitHub limit: 256); narrow the catalogue or database choices`);

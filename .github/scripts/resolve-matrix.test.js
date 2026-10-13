@@ -16,7 +16,7 @@ const requires = readMetadata('<?php $plugin->requires = 2022112800;');
 const releases = targets => targets.map(target => target.release);
 const coreBuilds = { '4.0': 2022041900, '4.1': 2022112800, '4.2': 2023042400,
   '4.3': 2023100900, '4.4': 2024042200, '4.5': 2024100700, '5.0': 2025041400,
-  '5.1': 2025100600, '5.2': 2026042000 };
+  '5.1': 2025100600, '5.2': 2026042000, '5.3': 2026100500 };
 const choose = (branches, base, metadata = requires, products = ['moodle']) => {
   const targets = selectTargets(catalogue, branches, base, metadata, products);
   const versions = Object.fromEntries(targets.map(target => [`${target.repository}@${target.ref}`, coreBuilds[target.release]]));
@@ -37,14 +37,14 @@ test('repository A: each release branch owns targets until its successor', () =>
   const branches = ['MOODLE_41_STABLE', 'MOODLE_45_STABLE', 'MOODLE_50_STABLE'];
   assert.deepEqual(releases(choose(branches, branches[0])), ['4.1']);
   assert.deepEqual(releases(choose(branches, branches[1])), ['4.5']);
-  assert.deepEqual(releases(choose(branches, branches[2])), ['5.0', '5.2']);
+  assert.deepEqual(releases(choose(branches, branches[2])), ['5.0', '5.2', '5.3']);
 });
 
 test('repository B: a 5.2 branch takes ownership of 5.2 and newer', () => {
   const branches = ['MOODLE_41_STABLE', 'MOODLE_500_STABLE', 'MOODLE_502_STABLE'];
   assert.deepEqual(releases(choose(branches, branches[0])), ['4.1', '4.5']);
   assert.deepEqual(releases(choose(branches, branches[1])), ['5.0']);
-  assert.deepEqual(releases(choose(branches, branches[2])), ['5.2']);
+  assert.deepEqual(releases(choose(branches, branches[2])), ['5.2', '5.3']);
 });
 
 test('Workplace release branches use the same applicable release boundaries', () => {
@@ -65,7 +65,7 @@ test('both products run by default on either branch prefix; explicit products re
     assert.deepEqual(choose(branches, base, requires, ['workplace']).map(target => target.product), ['workplace']);
   }
   assert.deepEqual(choose(branches, 'feature/123', requires, ['moodle', 'workplace']).map(target => target.product),
-    ['moodle', 'workplace', 'moodle', 'workplace', 'moodle', 'workplace', 'moodle', 'workplace']);
+    ['moodle', 'workplace', 'moodle', 'workplace', 'moodle', 'workplace', 'moodle', 'workplace', 'moodle']);
   assert.throws(() => selectTargets(catalogue, branches, branches[0], requires, ['other']), /products/);
 });
 
@@ -97,7 +97,17 @@ test('version.php supported and incompatible versions narrow branch ranges', () 
 
 test('ordinary branches test the first compatible release and required milestones', () => {
   const branches = ['MOODLE_500_STABLE', 'MOODLE_502_STABLE', 'mma_123_500_STABLE'];
-  assert.deepEqual(releases(choose(branches, 'feature/work')), ['4.1', '4.5', '5.0', '5.2']);
+  assert.deepEqual(releases(choose(branches, 'feature/work')), ['4.1', '4.5', '5.0', '5.2', '5.3']);
+});
+
+test('Moodle 5.3 is required but its matrix rows are experimental', () => {
+  const selected = choose(['MOODLE_502_STABLE'], 'MOODLE_502_STABLE');
+  const versions = Object.fromEntries(selected.map(target => [`${target.repository}@${target.ref}`, coreBuilds[target.release]]));
+  const rows = buildRows(selected, ['mysqli'], ['phpunit'], '', versions);
+  assert.deepEqual(releases(selected), ['5.2', '5.3']);
+  assert.deepEqual(rows.filter(row => row.moodle === 'MOODLE_503_STABLE').map(row => [row.php, row.experimental]),
+    [['8.3', true], ['8.4', true]]);
+  assert.ok(rows.filter(row => row.moodle === 'MOODLE_502_STABLE').every(row => row.experimental === false));
 });
 
 test('workplace ref and PHP range remain coupled', () => {
@@ -114,7 +124,7 @@ test('automatic PHP filter intersects each catalogue range without dropping rele
   const selected = choose(['MOODLE_500_STABLE'], 'MOODLE_500_STABLE');
   const versions = Object.fromEntries(selected.map(target => [`${target.repository}@${target.ref}`, 2026042000]));
   const rows = buildRows(selected, ['mysqli'], ['phpunit'], '', versions, ['8.3', '8.4', '7.4']);
-  assert.deepEqual([...new Set(rows.map(row => row.moodle))], ['MOODLE_500_STABLE', 'MOODLE_502_STABLE']);
+  assert.deepEqual([...new Set(rows.map(row => row.moodle))], ['MOODLE_500_STABLE', 'MOODLE_502_STABLE', 'MOODLE_503_STABLE']);
   assert.deepEqual([...new Set(rows.map(row => row.php))], ['8.3', '8.4']);
   assert.throws(() => buildRows(selected, ['mysqli'], ['phpunit'], '', versions, ['8.2']), /No requested PHP version supports.*MOODLE_502_STABLE/);
 });
@@ -124,6 +134,7 @@ test('invalid catalogue entries and incompatible ranges fail rather than falling
   assert.throws(() => phpRange('8.4', '8.2'));
   assert.throws(() => validateCatalogue({ targets: [catalogue[0], catalogue[0]] }), /Duplicate/);
   assert.throws(() => validateCatalogue({ targets: [{ ...catalogue[0], required: 'false' }] }), /Invalid target/);
+  assert.throws(() => validateCatalogue({ targets: [{ ...catalogue[0], experimental: 'true' }] }), /Invalid target/);
   assert.throws(() => validateCatalogue({ targets: [catalogue[0], { ...catalogue[0], product: 'workplace', required: true }] }), /Conflicting required/);
   assert.throws(() => readMetadata('<?php $plugin->version = 1;'), /requires/);
   assert.throws(() => readMetadata('<?php $plugin->requires = 1; $plugin->supported = get_versions();'), /supported/);
@@ -148,7 +159,7 @@ test('resolver reads matching core version.php before building automatic rows', 
   fs.writeFileSync(versionPath, '<?php $plugin->requires = 2025041400;');
   const checked = [];
   const lookup = async ({ ref }) => ({ data: { type: 'file', content: Buffer.from(
-    `$version = ${ref === 'MOODLE_500_STABLE' ? 2025041400 : ref === 'MOODLE_501_STABLE' ? 2025100600 : 2026042000}.00;`
+    `$version = ${ref === 'MOODLE_500_STABLE' ? 2025041400 : ref === 'MOODLE_501_STABLE' ? 2025100600 : ref === 'MOODLE_502_STABLE' ? 2026042000 : 2026100500}.00;`
   ).toString('base64') } });
   const github = {
     paginate: async () => [{ name: 'MOODLE_500_STABLE' }],
@@ -164,15 +175,15 @@ test('resolver reads matching core version.php before building automatic rows', 
       cataloguePath: path.join(__dirname, '..', 'moodle-test-targets.json'), versionPath,
       overrides: { moodle: ['MOODLE_401_STABLE'], php: ['7.4'] },
     });
-    assert.deepEqual(checked, [['MOODLE_500_STABLE', 'version.php'], ['MOODLE_501_STABLE', 'public/version.php'], ['MOODLE_502_STABLE', 'public/version.php']]);
-    assert.deepEqual(releases(result.targets), ['5.0', '5.2']);
+    assert.deepEqual(checked, [['MOODLE_500_STABLE', 'version.php'], ['MOODLE_501_STABLE', 'public/version.php'], ['MOODLE_502_STABLE', 'public/version.php'], ['MOODLE_503_STABLE', 'public/version.php']]);
+    assert.deepEqual(releases(result.targets), ['5.0', '5.2', '5.3']);
     fs.writeFileSync(versionPath, '<?php $plugin->requires = 2025100600;');
     const updated = await resolve({ github, context: { repo: { owner: 'example', repo: 'plugin' } },
       branch: 'MOODLE_500_STABLE', dbTypes: ['mysqli'], suites: ['phpunit'], dependencies: '',
       products: ['moodle'],
       cataloguePath: path.join(__dirname, '..', 'moodle-test-targets.json'), versionPath,
     });
-    assert.deepEqual(releases(updated.targets), ['5.1', '5.2']);
+    assert.deepEqual(releases(updated.targets), ['5.1', '5.2', '5.3']);
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }

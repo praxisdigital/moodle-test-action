@@ -142,7 +142,7 @@ permissions:
   statuses: write
 
 concurrency:
-  group: ${{ github.workflow }}-moodle-ci-${{ (github.event_name == 'push' || github.event_name == 'pull_request') && (github.event.pull_request.head.sha || github.sha) || github.run_id }}
+  group: ${{ github.workflow }}-moodle-ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -569,6 +569,7 @@ jobs:
               if ((prConfig?.automatic || process.env.AUTOMATIC) === 'true') {
                 result = await resolver.resolve({ github, appToken: process.env.APP_TOKEN, context,
                   branch: process.env.BASE_BRANCH, dbTypes, suites, dependencies,
+                  onWarning: message => core.warning(message),
                   phpVersions: prConfig?.php_versions || JSON.parse(process.env.PHP_VERSIONS),
                   products: prConfig ? (prConfig.products ? JSON.parse(prConfig.products) : undefined) :
                     (process.env.PRODUCTS ? JSON.parse(process.env.PRODUCTS) : undefined),

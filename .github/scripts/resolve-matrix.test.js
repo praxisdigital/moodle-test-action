@@ -129,6 +129,54 @@ test('automatic PHP filter intersects each catalogue range without dropping rele
   assert.throws(() => buildRows(selected, ['mysqli'], ['phpunit'], '', versions, ['8.2']), /No requested PHP version supports.*MOODLE_502_STABLE/);
 });
 
+const resolveWithExperimentalTarget = async ({ phpVersions = [], unavailableRef } = {}) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'experimental-matrix-'));
+  const cataloguePath = path.join(directory, 'catalogue.json');
+  const versionPath = path.join(directory, 'version.php');
+  fs.writeFileSync(cataloguePath, JSON.stringify({ targets: catalogue.filter(target =>
+    target.product === 'moodle' && ['5.0', '5.3'].includes(target.release)) }));
+  fs.writeFileSync(versionPath, '<?php $plugin->requires = 2025041400;');
+  const requested = [];
+  const warnings = [];
+  try {
+    const result = await resolve({
+      github: {
+        paginate: async () => [{ name: 'MOODLE_500_STABLE' }],
+        rest: { repos: { listBranches() {}, getContent: async ({ ref }) => {
+          requested.push(ref);
+          if (ref === unavailableRef) throw Object.assign(new Error('Not Found'), { status: 404 });
+          return { data: { type: 'file', content: Buffer.from(`$version = ${coreBuilds[ref === 'MOODLE_500_STABLE' ? '5.0' : '5.3']}.00;`).toString('base64') } };
+        } } },
+      },
+      context: { repo: { owner: 'example', repo: 'plugin' } }, branch: 'MOODLE_500_STABLE',
+      dbTypes: ['mysqli'], suites: ['phpunit'], dependencies: '', phpVersions,
+      products: ['moodle'], cataloguePath, versionPath, onWarning: message => warnings.push(message),
+    });
+    return { result, requested, warnings };
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+};
+
+test('experimental target outside a PHP filter is skipped before core lookup with a warning', async () => {
+  const { result, requested, warnings } = await resolveWithExperimentalTarget({ phpVersions: ['8.2'] });
+  assert.deepEqual(releases(result.targets), ['5.0']);
+  assert.deepEqual(requested, ['MOODLE_500_STABLE']);
+  assert.deepEqual(result.rows.map(row => row.php), ['8.2']);
+  assert.match(warnings[0], /Skipping experimental moodle\/moodle@MOODLE_503_STABLE.*no requested PHP version/);
+  assert.equal(warnings.length, 1);
+});
+
+test('unavailable experimental core ref is skipped with a warning', async () => {
+  const { result, requested, warnings } = await resolveWithExperimentalTarget({ unavailableRef: 'MOODLE_503_STABLE' });
+  assert.deepEqual(releases(result.targets), ['5.0']);
+  assert.deepEqual(requested, ['MOODLE_500_STABLE', 'MOODLE_503_STABLE']);
+  assert.ok(result.rows.every(row => row.moodle === 'MOODLE_500_STABLE'));
+  assert.match(warnings[0], /Skipping experimental moodle\/moodle@MOODLE_503_STABLE.*HTTP 404/);
+  assert.equal(warnings.length, 1);
+  await assert.rejects(resolveWithExperimentalTarget({ unavailableRef: 'MOODLE_500_STABLE' }), /HTTP 404/);
+});
+
 test('invalid catalogue entries and incompatible ranges fail rather than falling back', () => {
   assert.deepEqual(phpRange('7.4', '8.1'), ['7.4', '8.0', '8.1']);
   assert.throws(() => phpRange('8.4', '8.2'));

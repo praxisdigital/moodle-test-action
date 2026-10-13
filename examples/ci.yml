@@ -1,16 +1,9 @@
+# Copy to a plugin repository as .github/workflows/ci.yml.
 name: Moodle CI
 
 on:
   pull_request:
-    branches:
-      - main
-      - master
-      - MOODLE_*_STABLE
   push:
-    branches:
-      - main
-      - master
-      - MOODLE_*_STABLE
   issue_comment:
     types: [created]
   workflow_dispatch:

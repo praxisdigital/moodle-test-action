@@ -13,6 +13,7 @@ on:
   pull_request:
     types: [ opened, reopened, synchronize ]
   push:
+    branches: [main, master, '*_STABLE', '*_LATEST']
   issue_comment:
     types: [created]
   workflow_dispatch:
@@ -29,6 +30,8 @@ jobs:
     uses: praxisdigital/moodle-test-action/.github/workflows/ci.yml@master
     secrets: inherit
 ```
+
+Restrict `push` to the branches that need post-merge CI; pull requests already run CI on each new commit. An unrestricted `push` trigger also starts a separate workflow run for every commit to an open PR branch. The reusable workflow has one `setup` job followed by the test matrix and does not create a skipped push-gate check on PRs. Adjust the branch patterns to match your protected/default branches. If a branch matching the `push` filter is itself used as a PR head, GitHub still starts both events; exclude such branches from `push` if they must have only one run.
 
 The reusable workflow uses the automatic resolver by default. No `automatic` input is needed:
 

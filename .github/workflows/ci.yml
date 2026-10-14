@@ -141,15 +141,49 @@ permissions:
   issues: write
   statuses: write
 
+concurrency:
+  group: ${{ github.workflow }}-moodle-ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  push_gate:
+    if: ${{ github.event_name == 'push' }}
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.check.outputs.should_run }}
+    steps:
+      - name: Check for open pull requests
+        id: check
+        uses: actions/github-script@v8
+        with:
+          script: |
+            if (!context.ref?.startsWith('refs/heads/')) {
+              core.setOutput('should_run', 'true');
+              return;
+            }
+            const branch = context.ref.replace('refs/heads/', '');
+            const { owner, repo } = context.repo;
+            const pulls = await github.paginate(github.rest.pulls.list, {
+              owner,
+              repo,
+              state: 'open',
+              head: `${owner}:${branch}`,
+              per_page: 100,
+            });
+
+            if (pulls.length > 0) {
+              core.notice(`Skipping push run because branch ${branch} already has open pull request #${pulls[0].number}.`);
+            }
+            core.setOutput('should_run', String(pulls.length === 0));
+
   setup:
+    needs: push_gate
+    if: ${{ always() && (github.event_name != 'push' || needs.push_gate.outputs.should_run == 'true') }}
     runs-on: ubuntu-latest
     env:
       MOODLE_CI_APP_ID_VALUE: ${{ secrets.MOODLE_CI_APP_ID || vars.MOODLE_CI_APP_ID }}
       HAS_GITHUB_APP_PRIVATE_KEY: ${{ secrets.MOODLE_CI_APP_PRIVATE_KEY != '' }}
     outputs:
-      should_run: ${{ steps.config.outputs.should_run }}
-      skip_reason: ${{ steps.config.outputs.skip_reason }}
       is_behat_comment: ${{ steps.command.outputs.is_behat_comment }}
       is_stable_push: ${{ steps.command.outputs.is_stable_push }}
       pull_request_number: ${{ steps.command.outputs.pull_request_number }}
@@ -243,8 +277,6 @@ jobs:
             // A comment starts on the default branch. Do not parse its caller
             // inputs: the checked-out PR workflow is authoritative instead.
             if (context.eventName === 'issue_comment' && process.env.IS_BEHAT_COMMENT === 'true') {
-              core.setOutput('should_run', 'true');
-              core.setOutput('skip_reason', '');
               core.setOutput('automatic', 'true');
               core.setOutput('db_types', '["mysqli"]');
               core.setOutput('dependencies', '');
@@ -345,31 +377,8 @@ jobs:
               throw new Error('MOODLE_DB_TYPES must contain only mysqli, pgsql or sqlsrv');
             }
 
-            let shouldRun = true;
-            let skipReason = '';
-
-            if (context.eventName === 'push' && context.ref?.startsWith('refs/heads/')) {
-              const branch = context.ref.replace('refs/heads/', '');
-              const { owner, repo } = context.repo;
-              const pulls = await github.paginate(github.rest.pulls.list, {
-                owner,
-                repo,
-                state: 'open',
-                head: `${owner}:${branch}`,
-                per_page: 100,
-              });
-
-              if (pulls.length > 0) {
-                shouldRun = false;
-                skipReason = `Skipping push run because branch ${branch} already has open pull request #${pulls[0].number}.`;
-                core.notice(skipReason);
-              }
-            }
-
             core.info(`Resolved ${resolved.db_types.length} database type(s); ${automatic ? 'automatic catalogue' : 'legacy variables'} matrix mode.`);
 
-            core.setOutput('should_run', String(shouldRun));
-            core.setOutput('skip_reason', skipReason);
             core.setOutput('automatic', String(automatic));
             core.setOutput('db_types', JSON.stringify(resolved.db_types));
             core.setOutput('dependencies', resolved.dependencies.join(' '));
@@ -560,6 +569,7 @@ jobs:
               if ((prConfig?.automatic || process.env.AUTOMATIC) === 'true') {
                 result = await resolver.resolve({ github, appToken: process.env.APP_TOKEN, context,
                   branch: process.env.BASE_BRANCH, dbTypes, suites, dependencies,
+                  onWarning: message => core.warning(message),
                   phpVersions: prConfig?.php_versions || JSON.parse(process.env.PHP_VERSIONS),
                   products: prConfig ? (prConfig.products ? JSON.parse(prConfig.products) : undefined) :
                     (process.env.PRODUCTS ? JSON.parse(process.env.PRODUCTS) : undefined),
@@ -591,7 +601,7 @@ jobs:
 
   test:
     needs: setup
-    if: ${{ needs.setup.outputs.should_run == 'true' && needs.setup.outputs.has_tests == 'true' }}
+    if: ${{ needs.setup.outputs.has_tests == 'true' }}
     name: ${{ matrix.suite }} (${{ matrix.php }}, ${{ matrix.moodle }}, ${{ matrix.moodle_repository }}, ${{ matrix.os }}, ${{ matrix.dbtype }})
     runs-on: ${{ matrix.os }}
     continue-on-error: ${{ matrix.experimental }}

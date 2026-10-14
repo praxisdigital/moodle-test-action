@@ -56,6 +56,7 @@ const validateCatalogue = data => {
     const release = releaseNumber(target.release);
     if (!['moodle', 'workplace'].includes(target.product) ||
         typeof target.required !== 'boolean' ||
+        (target.experimental !== undefined && typeof target.experimental !== 'boolean') ||
         !/^[\w.-]+\/[\w.-]+$/.test(target.repository) ||
         !/^[A-Za-z0-9_.-]+$/.test(target.ref) ||
         (target.version_file && !['version.php', 'public/version.php'].includes(target.version_file))) {
@@ -141,11 +142,14 @@ const buildRows = (targets, dbTypes, suites, dependencies, coreVersions, phpVers
     const coreVersion = coreVersions[`${target.repository}@${target.ref}`];
     if (!Number.isFinite(coreVersion)) throw new Error(`Missing core version for ${target.repository}@${target.ref}`);
     const phpForTarget = phpVersions.length ? [...new Set(phpVersions)].filter(php => target.php.includes(php)) : target.php;
-    if (!phpForTarget.length) throw new Error(`No requested PHP version supports ${target.repository}@${target.ref} (allowed: ${target.php_min}–${target.php_max})`);
+    if (!phpForTarget.length) {
+      if (target.experimental) continue;
+      throw new Error(`No requested PHP version supports ${target.repository}@${target.ref} (allowed: ${target.php_min}–${target.php_max})`);
+    }
     for (const suite of suites) for (const php of phpForTarget) for (const dbtype of dbTypes) {
       if (suite === 'behat' && !['mysqli', 'pgsql'].includes(dbtype)) continue;
       rows.push({ suite, php, moodle: target.ref, moodle_repository: target.repository,
-        os: 'ubuntu-latest', dbtype, experimental: false, dependencies });
+        os: 'ubuntu-latest', dbtype, experimental: target.experimental === true, dependencies });
     }
   }
   if (rows.length > 256) throw new Error(`Matrix has ${rows.length} rows (GitHub limit: 256); narrow the catalogue or database choices`);
@@ -179,7 +183,7 @@ const legacyRows = ({ phpVersions, moodleVersions, repositories, os, dbTypes, ex
   return { rows, description: `Legacy matrix: ${rows.length} row(s) from workflow inputs and/or org/repository variables` };
 };
 
-const resolve = async ({ github, appToken, context, branch, dbTypes, suites, dependencies, phpVersions = [], products, cataloguePath, versionPath, request = fetch }) => {
+const resolve = async ({ github, appToken, context, branch, dbTypes, suites, dependencies, phpVersions = [], products, cataloguePath, versionPath, request = fetch, onWarning = () => {} }) => {
   const catalogue = validateCatalogue(JSON.parse(fs.readFileSync(cataloguePath, 'utf8')));
   const metadata = readMetadata(fs.readFileSync(versionPath, 'utf8'));
   const { owner, repo } = context.repo;
@@ -187,34 +191,45 @@ const resolve = async ({ github, appToken, context, branch, dbTypes, suites, dep
   const targets = selectTargets(catalogue, branches.map(item => item.name), branch, metadata, products);
   if (!targets.length) throw new Error(`No catalogue targets match ${branch} and plugin version.php`);
   const coreVersions = {};
+  const readableTargets = [];
   for (const target of targets) {
+    if (target.experimental && phpVersions.length && !phpVersions.some(php => target.php.includes(php))) {
+      onWarning(`Skipping experimental ${target.repository}@${target.ref}: no requested PHP version supports ${target.php_min}–${target.php_max}.`);
+      continue;
+    }
     const [targetOwner, targetRepo] = target.repository.split('/');
     const file = target.version_file || 'version.php';
-    let data;
     try {
-      if (target.product === 'workplace' && appToken) {
-        const url = new URL(`${process.env.GITHUB_API_URL || 'https://api.github.com'}/repos/${targetOwner}/${targetRepo}/contents/${file}`);
-        url.searchParams.set('ref', target.ref);
-        const response = await request(url, { headers: {
-          Authorization: `Bearer ${appToken}`,
-          Accept: 'application/vnd.github+json',
-          'X-GitHub-Api-Version': '2022-11-28',
-        } });
-        if (!response.ok) throw Object.assign(new Error('GitHub API request failed'), { status: response.status });
-        data = await response.json();
-      } else {
-        data = (await github.rest.repos.getContent({ owner: targetOwner, repo: targetRepo, path: file, ref: target.ref })).data;
+      let data;
+      try {
+        if (target.product === 'workplace' && appToken) {
+          const url = new URL(`${process.env.GITHUB_API_URL || 'https://api.github.com'}/repos/${targetOwner}/${targetRepo}/contents/${file}`);
+          url.searchParams.set('ref', target.ref);
+          const response = await request(url, { headers: {
+            Authorization: `Bearer ${appToken}`,
+            Accept: 'application/vnd.github+json',
+            'X-GitHub-Api-Version': '2022-11-28',
+          } });
+          if (!response.ok) throw Object.assign(new Error('GitHub API request failed'), { status: response.status });
+          data = await response.json();
+        } else {
+          data = (await github.rest.repos.getContent({ owner: targetOwner, repo: targetRepo, path: file, ref: target.ref })).data;
+        }
+      } catch (error) {
+        throw new Error(`Cannot read ${target.repository}@${target.ref}/${file} (HTTP ${error.status || 'unknown'}). Check catalogue ref, version_file and private GitHub App Contents: Read access.`);
       }
+      if (data.type !== 'file' || !data.content) throw new Error(`Invalid core version.php at ${target.repository}@${target.ref}`);
+      const coreText = Buffer.from(data.content, 'base64').toString('utf8');
+      const version = coreText.match(/\$version\s*=\s*(\d+)(?:\.\d+)?\s*;/);
+      if (!version) throw new Error(`Cannot read core $version at ${target.repository}@${target.ref}`);
+      coreVersions[`${target.repository}@${target.ref}`] = Number(version[1]);
+      readableTargets.push(target);
     } catch (error) {
-      throw new Error(`Cannot read ${target.repository}@${target.ref}/${file} (HTTP ${error.status || 'unknown'}). Check catalogue ref, version_file and private GitHub App Contents: Read access.`);
+      if (!target.experimental) throw error;
+      onWarning(`Skipping experimental ${target.repository}@${target.ref}: ${error.message}`);
     }
-    if (data.type !== 'file' || !data.content) throw new Error(`Invalid core version.php at ${target.repository}@${target.ref}`);
-    const coreText = Buffer.from(data.content, 'base64').toString('utf8');
-    const version = coreText.match(/\$version\s*=\s*(\d+)(?:\.\d+)?\s*;/);
-    if (!version) throw new Error(`Cannot read core $version at ${target.repository}@${target.ref}`);
-    coreVersions[`${target.repository}@${target.ref}`] = Number(version[1]);
   }
-  const selected = selectRequiredTargets(targets, coreVersions, metadata.requires);
+  const selected = selectRequiredTargets(readableTargets, coreVersions, metadata.requires);
   if (!selected.length) throw new Error(`No ${branch} catalogue targets meet plugin requires ${metadata.requires}`);
   const rows = buildRows(selected, dbTypes, suites, dependencies, coreVersions, phpVersions);
   return { targets: selected, rows, metadata,

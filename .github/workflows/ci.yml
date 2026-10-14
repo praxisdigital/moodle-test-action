@@ -146,7 +146,39 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  push_gate:
+    if: ${{ github.event_name == 'push' }}
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.check.outputs.should_run }}
+    steps:
+      - name: Check for open pull requests
+        id: check
+        uses: actions/github-script@v8
+        with:
+          script: |
+            if (!context.ref?.startsWith('refs/heads/')) {
+              core.setOutput('should_run', 'true');
+              return;
+            }
+            const branch = context.ref.replace('refs/heads/', '');
+            const { owner, repo } = context.repo;
+            const pulls = await github.paginate(github.rest.pulls.list, {
+              owner,
+              repo,
+              state: 'open',
+              head: `${owner}:${branch}`,
+              per_page: 100,
+            });
+
+            if (pulls.length > 0) {
+              core.notice(`Skipping push run because branch ${branch} already has open pull request #${pulls[0].number}.`);
+            }
+            core.setOutput('should_run', String(pulls.length === 0));
+
   setup:
+    needs: push_gate
+    if: ${{ always() && (github.event_name != 'push' || needs.push_gate.outputs.should_run == 'true') }}
     runs-on: ubuntu-latest
     env:
       MOODLE_CI_APP_ID_VALUE: ${{ secrets.MOODLE_CI_APP_ID || vars.MOODLE_CI_APP_ID }}

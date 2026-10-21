@@ -32,7 +32,7 @@ runs:
           const os = require('os');
           const path = require('path');
           const {execFileSync} = require('child_process');
-          const {parseReport} = require(process.env.REPORTS_MODULE);
+          const {parseReport, readExpectedTargets} = require(process.env.REPORTS_MODULE);
           try {
             const {owner, repo} = context.repo;
             const baseBranch = context.payload.pull_request.base.ref;
@@ -61,8 +61,25 @@ runs:
                 per_page: 100,
               });
               const matches = artifacts.filter((artifact) => artifact.name.startsWith(prefix) && !artifact.expired);
+              const manifestArtifact = artifacts.find(artifact => artifact.name === 'coverage-expected-targets' && !artifact.expired);
+              if (!manifestArtifact) {
+                core.notice(`Run ${run.id} has no expected-target manifest; trying older baseline runs.`);
+                continue;
+              }
+              const manifestDir = fs.mkdtempSync(path.join(os.tmpdir(), 'coverage-manifest-'));
+              try {
+                const response = await github.rest.actions.downloadArtifact({owner, repo, artifact_id: manifestArtifact.id, archive_format: 'zip'});
+                const archive = path.join(manifestDir, 'manifest.zip');
+                fs.writeFileSync(archive, Buffer.from(response.data));
+                readExpectedTargets(execFileSync('unzip', ['-p', archive, 'expected-targets.json'], {encoding: 'utf8', maxBuffer: 1024 * 1024}));
+              } catch (error) {
+                core.warning(`Run ${run.id} has an unusable expected-target manifest: ${error.message}`);
+                continue;
+              } finally {
+                fs.rmSync(manifestDir, {recursive: true, force: true});
+              }
               let usable = false;
-              for (const artifact of matches) {
+              for (const artifact of matches.filter(artifact => artifact.name !== 'coverage-expected-targets')) {
                 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'coverage-baseline-'));
                 try {
                   const response = await github.rest.actions.downloadArtifact({
@@ -127,7 +144,7 @@ runs:
           const {owner, repo} = context.repo;
           const issue_number = context.payload.pull_request.number;
           const marker = '<!-- moodle-test-action-coverage-summary -->';
-          const {findReports, mergeReports, comparisonIssues} = require(process.env.REPORTS_MODULE);
+          const {findReports, mergeRun, comparisonIssues} = require(process.env.REPORTS_MODULE);
 
           function fmt(value) {
             return `${value.toFixed(2)}%`;
@@ -209,13 +226,13 @@ runs:
             } else if (baseFiles.length === 0) {
               body = reason('**Coverage incomplete / not comparable.** Base-branch coverage artifacts could not be downloaded or contained no reports. Numeric deltas and file additions/removals are withheld.');
             } else {
-              const base = mergeReports(baseFiles, core.warning);
-              const pr = mergeReports(prFiles, core.warning);
+              const base = mergeRun(path.join(process.env.GITHUB_WORKSPACE, 'coverage-summary', 'base'), core.warning);
+              const pr = mergeRun(path.join(process.env.GITHUB_WORKSPACE, 'coverage-summary', 'pr'), core.warning);
               const issues = comparisonIssues(base, pr);
               body = issues.length ? reason([
                 '**Coverage incomplete / not comparable.**',
                 '',
-                'Numeric deltas and file additions/removals are withheld because the usable matrix target sets differ or reports were rejected.',
+                'Numeric deltas and file additions/removals are withheld because expected matrix coverage is incomplete, manifests are unavailable, target sets differ, or reports were rejected.',
                 '',
                 ...issues.map(issue => `- ${issue.replace(/[\r\n]/g, ' ')}`),
                 '',

@@ -105,12 +105,24 @@ until a usable executable-line report is found. Baseline discovery and merging
 share metadata, path, and executable-line validation. Old Clover-only artifacts
 are skipped: run the base-branch workflow again after upgrading.
 
-Numeric comparisons require identical successfully parsed target sets (identified
-by the stable coverage artifact names) and no rejected reports on either side.
+Before launching tests, reusable workflow setup uploads a versioned
+`coverage-expected-targets` artifact containing `expected-targets.json`, derived
+from the resolved PHPUnit matrix including experimental targets. Its target
+identities use the same function as the report producer. Numeric comparisons
+require each run's reports to cover its independently recorded expected set,
+identical successfully parsed target sets, and no rejected reports on either side.
 Otherwise the PR comment reports **Coverage incomplete / not comparable** and
 lists missing/rejected targets, withholding deltas and file additions/removals.
 Failed test jobs still upload valid reports; failed jobs without a report cannot
 silently turn a partial matrix into a comparable diff.
+
+Standalone/root-action callers must also upload `coverage-expected-targets`
+before tests. Generate `expected-targets.json` with
+`coverage-summary/targets.js`'s `expectedTargets(rows)` using their resolved
+matrix rows (`suite: 'phpunit'`, `moodle`, `php`, `dbtype`, `os`,
+`moodle_repository`), rather than deriving expectations from received reports.
+Missing/invalid manifests withhold numeric comparisons. Baseline runs predating
+the manifest must be refreshed.
 
 The line map is generated locally from PHPUnit's raw coverage export, which is
 deleted before upload. It preserves executable method-start lines that Clover

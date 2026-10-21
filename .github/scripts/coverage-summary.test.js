@@ -8,10 +8,18 @@ const vm = require('node:vm');
 const {execFileSync} = require('node:child_process');
 const YAML = require('yaml');
 const reports = require('../../coverage-summary/reports');
+const {targetName, expectedTargets} = require('../../coverage-summary/targets');
 const action = YAML.parse(fs.readFileSync('coverage-summary/action.yml', 'utf8'));
 const metadata = JSON.stringify({pluginPath: 'local/mxsdk'});
 const report = lines => JSON.stringify({version: 1, files: {'/runner/moodle/public/local/mxsdk/classes/example.php': lines}});
 const scratch = () => fs.mkdtempSync(path.join(os.tmpdir(), 'coverage-test-'));
+const targetA = 'coverage-target-a';
+const targetB = 'coverage-target-b';
+
+function manifest(dir, targets) {
+  fs.mkdirSync(path.join(dir, 'coverage-expected-targets'), {recursive: true});
+  fs.writeFileSync(path.join(dir, 'coverage-expected-targets/expected-targets.json'), JSON.stringify({version: 1, targets}));
+}
 
 function artifact(dir, lines, meta = metadata) {
   fs.mkdirSync(dir, {recursive: true});
@@ -66,6 +74,8 @@ test('baseline discovery skips missing/invalid metadata, empty and out-of-plugin
       for (const [name, content] of Object.entries(files)) fs.writeFileSync(path.join(folder, name), content);
       execFileSync('zip', ['-q', path.join(dir, `${index}.zip`), ...Object.keys(files)], {cwd: folder});
     }
+    fs.writeFileSync(path.join(dir, 'expected-targets.json'), JSON.stringify({version: 1, targets: [targetA]}));
+    execFileSync('zip', ['-q', path.join(dir, 'manifest.zip'), 'expected-targets.json'], {cwd: dir});
     await vm.runInNewContext(`(async () => {${action.runs.steps.find(s => s.name === 'Finding base branch coverage run').with.script}\n})()`, {
       Buffer,
       require: name => name === 'fs' ? {...fs, appendFileSync: (file, value) => { selected += value; }} : require(name),
@@ -74,11 +84,11 @@ test('baseline discovery skips missing/invalid metadata, empty and out-of-plugin
       core: {notice: () => {}, warning: () => {}},
       github: {
         paginate: async (method, params) => method === 'runs' ? candidates.map((_, id) => ({id}))
-          : [{id: params.run_id, name: 'coverage-test', expired: false}],
+          : [{id: 'manifest', name: 'coverage-expected-targets', expired: false}, {id: params.run_id, name: targetA, expired: false}],
         rest: {actions: {
           getWorkflowRun: async () => ({data: {workflow_id: 7}}),
           listWorkflowRuns: 'runs', listWorkflowRunArtifacts: 'artifacts',
-          downloadArtifact: async ({artifact_id}) => { downloads.push(artifact_id); return {data: fs.readFileSync(path.join(dir, `${artifact_id}.zip`))}; },
+          downloadArtifact: async ({artifact_id}) => { if (artifact_id !== 'manifest') downloads.push(artifact_id); return {data: fs.readFileSync(path.join(dir, `${artifact_id}.zip`))}; },
         }},
       },
     });
@@ -93,8 +103,9 @@ test('summary updates the existing bot comment using exact line reports', async 
   const dir = scratch();
   let comment;
   try {
-    artifact(path.join(dir, 'coverage-summary/pr/a'), report({1: true, 2: true}));
-    artifact(path.join(dir, 'coverage-summary/base/a'), report({1: true, 2: false}));
+    artifact(path.join(dir, 'coverage-summary/pr', targetA), report({1: true, 2: true}));
+    artifact(path.join(dir, 'coverage-summary/base', targetA), report({1: true, 2: false}));
+    for (const side of ['base', 'pr']) manifest(path.join(dir, 'coverage-summary', side), [targetA]);
     await vm.runInNewContext(`(async () => {${action.runs.steps.find(s => s.name === 'Commenting combined PR coverage diff').with.script}\n})()`, {
       require, process: {env: {GITHUB_WORKSPACE: dir, REPORTS_MODULE: path.resolve('coverage-summary/reports.js'), BASE_ARTIFACTS_FOUND: 'true'}},
       context: {repo: {owner: 'test', repo: 'plugin'}, payload: {pull_request: {number: 4}}},
@@ -163,8 +174,53 @@ test('discovers metadata-only artifacts as rejected targets instead of silently 
     const merged = reports.mergeReports(reports.findReports(dir));
     assert.deepEqual(merged.targets, ['a']);
     assert.equal(merged.rejected[0].target, 'b');
-    assert.equal(reports.comparisonIssues(merged, merged).length, 2);
+    assert.ok(reports.comparisonIssues(merged, merged).some(issue => issue.includes('rejected target b')));
   } finally { fs.rmSync(dir, {recursive: true, force: true}); }
+});
+
+test('expected A,B with only A on both sides blocks the numeric PR comment', async () => {
+  const dir = scratch();
+  let body;
+  try {
+    for (const side of ['base', 'pr']) {
+      const root = path.join(dir, 'coverage-summary', side);
+      artifact(path.join(root, targetA), report({1: true}));
+      manifest(root, [targetA, targetB]);
+    }
+    await vm.runInNewContext(`(async () => {${action.runs.steps.find(s => s.name === 'Commenting combined PR coverage diff').with.script}\n})()`, {
+      require, process: {env: {GITHUB_WORKSPACE: dir, REPORTS_MODULE: path.resolve('coverage-summary/reports.js'), BASE_ARTIFACTS_FOUND: 'true'}},
+      context: {repo: {owner: 'test', repo: 'plugin'}, payload: {pull_request: {number: 4}}}, core: {warning: assert.fail},
+      github: {paginate: async () => [], rest: {issues: {listComments: () => {}, createComment: async value => { body = value.body; }}}},
+    });
+    assert.match(body, /Coverage incomplete \/ not comparable/);
+    assert.match(body, /PR missing expected targets: coverage-target-b/);
+    assert.match(body, /Base missing expected targets: coverage-target-b/);
+    assert.doesNotMatch(body, /\| Statements \||\d+\.\d+%/);
+  } finally { fs.rmSync(dir, {recursive: true, force: true}); }
+});
+
+test('manifest validation fails closed on missing, invalid, duplicate or empty expectations', () => {
+  for (const value of ['null', '{}', '{', '{"version":1,"targets":[]}', JSON.stringify({version: 1, targets: [targetA, targetA]})]) {
+    assert.throws(() => reports.readExpectedTargets(value));
+  }
+  const dir = scratch();
+  try {
+    artifact(path.join(dir, targetA), report({1: true}));
+    const run = reports.mergeRun(dir);
+    assert.ok(reports.comparisonIssues(run, run).some(issue => issue.includes('expected-target manifest')));
+  } finally { fs.rmSync(dir, {recursive: true, force: true}); }
+});
+
+test('expectations include experimental PHPUnit targets and exclude Behat using the producer identity', () => {
+  const a = {suite: 'phpunit', moodle: 'MOODLE_500_STABLE', php: '8.3', dbtype: 'mysqli', os: 'ubuntu-latest', moodle_repository: 'moodle/moodle'};
+  const b = {...a, php: '8.4', experimental: true};
+  const expected = expectedTargets([a, b, {...a, suite: 'behat'}]);
+  assert.deepEqual(expected.targets, [targetName(a), targetName(b)].sort());
+  assert.throws(() => expectedTargets([a, a]), /Duplicate/);
+  const complete = {targets: expected.targets, expectedTargets: expected.targets, rejected: []};
+  assert.deepEqual(reports.comparisonIssues(complete, complete), []);
+  const missingExperimental = {...complete, targets: [targetName(a)]};
+  assert.ok(reports.comparisonIssues(missingExperimental, missingExperimental).some(issue => issue.includes(targetName(b))));
 });
 
 test('fallback config scopes plugin source for PHPUnit 9 and 11', () => {

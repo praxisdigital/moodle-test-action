@@ -567,6 +567,18 @@ jobs:
             core.setOutput('post_no_tests_comment', prConfig?.post_no_tests_comment || process.env.DEFAULT_POST_NO_TESTS_COMMENT);
             core.setOutput('has_tests', String(rows.length > 0));
             core.setOutput('test_matrix', JSON.stringify({ include: rows }));
+            const fs = require('fs');
+            const {expectedTargets} = require(`${process.env.GITHUB_WORKSPACE}/.moodle-test-action/coverage-summary/targets.js`);
+            const manifestDir = `${process.env.GITHUB_WORKSPACE}/coverage-manifest`;
+            fs.mkdirSync(manifestDir, {recursive: true});
+            fs.writeFileSync(`${manifestDir}/expected-targets.json`, JSON.stringify(expectedTargets(rows)));
+
+      - name: Record expected PHPUnit coverage targets before tests
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-expected-targets
+          path: coverage-manifest/expected-targets.json
+          if-no-files-found: error
 
   test:
     needs: setup

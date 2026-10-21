@@ -402,13 +402,15 @@ runs:
         if [ "$FAIL_ON_EMPTY" = "true" ]; then
           EXTRA="--fail-on-empty-test-suite"
         fi
+        PHPUNIT_MAJOR=$("$PHPUNIT" --version | sed -En 's/^PHPUnit ([0-9]+).*/\1/p')
         if [ -f "$PLUGIN_FULL/phpunit.xml" ]; then
           echo "Running phpunit on ${component} with plugin phpunit.xml"
-          "$PHPUNIT" -c "$PLUGIN_FULL/phpunit.xml" --testdox --colors $EXTRA "${COVERAGE_ARGS[@]}" $ADDITIONAL_STUFF
+          CONFIG=$(mktemp "$PLUGIN_FULL/phpunit-coverage-XXXXXX.xml")
+          php "$PREPARE_COVERAGE" "$PLUGIN_FULL/phpunit.xml" "$CONFIG" "$PLUGIN_FULL" "$PHPUNIT_MAJOR" preserve
+          "$PHPUNIT" -c "$CONFIG" --testdox --colors $EXTRA "${COVERAGE_ARGS[@]}" $ADDITIONAL_STUFF
         else
           echo "Running phpunit on ${component} with testsuite from Moodle phpunit.xml"
           CONFIG=$(mktemp "$GITHUB_WORKSPACE/moodle/phpunit-coverage-XXXXXX.xml")
-          PHPUNIT_MAJOR=$("$PHPUNIT" --version | sed -En 's/^PHPUnit ([0-9]+).*/\1/p')
           php "$PREPARE_COVERAGE" \
             "$GITHUB_WORKSPACE/moodle/phpunit.xml" "$CONFIG" "$PLUGIN_FULL" "$PHPUNIT_MAJOR"
           "$PHPUNIT" -c "$CONFIG" --testsuite "${component}_testsuite" --testdox --colors $EXTRA "${COVERAGE_ARGS[@]}" $ADDITIONAL_STUFF

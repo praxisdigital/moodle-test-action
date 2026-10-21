@@ -97,7 +97,9 @@ successful base-branch run with coverage artifacts.
 
 Fallback runs using Moodle's generated PHPUnit configuration replace its source
 filter with the plugin directory (excluding `tests` and `vendor`). Plugin-owned
-PHPUnit configurations retain their source filters. The summary also rejects
+PHPUnit configurations retain explicit source filters and exclusions; configurations
+without an include filter receive plugin-scoped coverage automatically. Temporary
+configurations stay beside their originals to preserve relative paths. The summary also rejects
 files outside the plugin path and requires valid plugin-path metadata. Artifacts
 are published only when non-empty Clover and executable-line reports exist; baseline discovery
 skips older metadata-only artifacts and continues to the next successful run

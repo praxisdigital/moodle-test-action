@@ -423,15 +423,17 @@ runs:
         DBTYPE: ${{ inputs.dbtype }}
         OS: ${{ inputs.os }}
         MOODLE_REPOSITORY: ${{ inputs.moodle_repository }}
+        TARGETS_MODULE: ${{ github.action_path }}/../coverage-summary/targets.js
       run: |
         if [ ! -s "$GITHUB_WORKSPACE/coverage/clover.xml" ] || [ ! -s "$GITHUB_WORKSPACE/coverage/lines.json" ]; then
           echo "No complete coverage report was generated; skipping coverage artifact."
           echo "coverage_artifact_name=" >> "$GITHUB_ENV"
           exit 0
         fi
-        raw="coverage-${component}-${MOODLE}-php${PHP}-${DBTYPE}-${OS}-${MOODLE_REPOSITORY}"
-        artifact_name=$(printf '%s' "$raw" | tr '/:@ ' '----' | tr -cd 'A-Za-z0-9_.-')
-        echo "coverage_artifact_name=$artifact_name" >> "$GITHUB_ENV"
+        node -e 'const fs = require("fs"), {targetName} = require(process.env.TARGETS_MODULE);
+          const target = targetName({moodle: process.env.MOODLE, php: process.env.PHP,
+            dbtype: process.env.DBTYPE, os: process.env.OS, moodle_repository: process.env.MOODLE_REPOSITORY});
+          fs.appendFileSync(process.env.GITHUB_ENV, `coverage_artifact_name=${target}\n`);'
         mkdir -p "$GITHUB_WORKSPACE/coverage"
         PLUGIN_PATH="$resolved_plugin_path" php -r '
           $path = preg_replace("~^public/~", "", trim(getenv("PLUGIN_PATH"), "/"));

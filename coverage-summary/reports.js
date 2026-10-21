@@ -84,6 +84,12 @@ function mergeReports(reports, warning = () => {}) {
 function comparisonIssues(base, pr) {
   const issues = [];
   for (const [label, side, other] of [['PR', pr, base], ['Base', base, pr]]) {
+    if (side.manifestError) issues.push(`${label} expected-target manifest: ${side.manifestError}`);
+    const expected = side.expectedTargets || [];
+    const absent = expected.filter(target => !side.targets.includes(target));
+    if (absent.length) issues.push(`${label} missing expected targets: ${absent.join(', ')}`);
+    const unexpected = side.targets.filter(target => !expected.includes(target));
+    if (unexpected.length) issues.push(`${label} unexpected targets: ${unexpected.join(', ')}`);
     const missing = other.targets.filter(target => !side.targets.includes(target));
     if (missing.length) issues.push(`${label} missing usable targets: ${missing.join(', ')}`);
     for (const {target, reason} of side.rejected) issues.push(`${label} rejected target ${target}: ${reason}`);
@@ -92,4 +98,24 @@ function comparisonIssues(base, pr) {
   return issues;
 }
 
-module.exports = {parseReport, findReports, mergeReports, relativeName, comparisonIssues};
+function readExpectedTargets(text) {
+  const manifest = JSON.parse(text);
+  if (!manifest || manifest.version !== 1 || !Array.isArray(manifest.targets)
+      || !manifest.targets.length || manifest.targets.some(target => typeof target !== 'string' || !/^coverage-target-[A-Za-z0-9_.!~*'()%\-]+$/.test(target))
+      || new Set(manifest.targets).size !== manifest.targets.length) {
+    throw new Error('Invalid or empty expected PHPUnit target set');
+  }
+  return manifest.targets.slice().sort();
+}
+
+function mergeRun(dir, warning = () => {}) {
+  const result = mergeReports(findReports(dir), warning);
+  try {
+    result.expectedTargets = readExpectedTargets(fs.readFileSync(path.join(dir, 'coverage-expected-targets', 'expected-targets.json'), 'utf8'));
+  } catch (error) {
+    result.manifestError = error.message;
+  }
+  return result;
+}
+
+module.exports = {parseReport, findReports, mergeReports, mergeRun, readExpectedTargets, relativeName, comparisonIssues};

@@ -127,7 +127,7 @@ runs:
           const {owner, repo} = context.repo;
           const issue_number = context.payload.pull_request.number;
           const marker = '<!-- moodle-test-action-coverage-summary -->';
-          const {findReports, mergeReports} = require(process.env.REPORTS_MODULE);
+          const {findReports, mergeReports, comparisonIssues} = require(process.env.REPORTS_MODULE);
 
           function fmt(value) {
             return `${value.toFixed(2)}%`;
@@ -203,13 +203,24 @@ runs:
 
           try {
             if (prFiles.length === 0) {
-              body = reason('No coverage diff is available because this PR run did not produce any `lines.json` coverage artifacts.');
+              body = reason('**Coverage incomplete / not comparable.** This PR run did not produce any coverage artifacts. Numeric deltas and file additions/removals are withheld.');
             } else if (process.env.BASE_ARTIFACTS_FOUND !== 'true') {
               body = reason('No coverage diff is available because no base-branch coverage artifacts were found, or the workflow token could not read artifacts. Run this workflow on the base branch first and ensure the workflow has `actions: read`, then rerun the PR workflow.');
             } else if (baseFiles.length === 0) {
-              body = reason('No coverage diff is available because base-branch coverage artifacts could not be downloaded or did not contain `lines.json`.');
+              body = reason('**Coverage incomplete / not comparable.** Base-branch coverage artifacts could not be downloaded or contained no reports. Numeric deltas and file additions/removals are withheld.');
             } else {
-              body = buildDiff(mergeReports(baseFiles, core.warning), mergeReports(prFiles, core.warning));
+              const base = mergeReports(baseFiles, core.warning);
+              const pr = mergeReports(prFiles, core.warning);
+              const issues = comparisonIssues(base, pr);
+              body = issues.length ? reason([
+                '**Coverage incomplete / not comparable.**',
+                '',
+                'Numeric deltas and file additions/removals are withheld because the usable matrix target sets differ or reports were rejected.',
+                '',
+                ...issues.map(issue => `- ${issue.replace(/[\r\n]/g, ' ')}`),
+                '',
+                'Rerun the missing or rejected targets and compare runs with the same matrix.',
+              ].join('\n')) : buildDiff(base, pr);
             }
           } catch (error) {
             body = reason(`No coverage diff is available because coverage parsing failed: ${error.message}`);

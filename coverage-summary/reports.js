@@ -41,28 +41,35 @@ function parseReport(metadataText, linesText) {
 
 function findReports(dir) {
   if (!fs.existsSync(dir)) return [];
-  return fs.readdirSync(dir, {withFileTypes: true}).flatMap(entry => {
+  return [...new Set(fs.readdirSync(dir, {withFileTypes: true}).flatMap(entry => {
     const file = path.join(dir, entry.name);
-    return entry.isDirectory() ? findReports(file) : entry.name === 'lines.json' ? [file] : [];
-  }).sort();
+    return entry.isDirectory() ? findReports(file)
+      : ['lines.json', 'metadata.json', 'clover.xml'].includes(entry.name) ? [path.join(dir, 'lines.json')] : [];
+  }))].sort();
 }
 
 function mergeReports(reports, warning = () => {}) {
   const lines = {};
   let artifactCount = 0;
+  const targets = [];
+  const rejected = [];
   for (const file of reports) {
+    const target = path.basename(path.dirname(file));
     try {
+      if (targets.includes(target)) throw new Error('Duplicate coverage target');
       const files = parseReport(fs.readFileSync(path.join(path.dirname(file), 'metadata.json'), 'utf8'), fs.readFileSync(file, 'utf8'));
       for (const [name, coverage] of Object.entries(files)) {
         lines[name] ??= {};
         for (const [number, covered] of Object.entries(coverage)) lines[name][number] = lines[name][number] || covered;
       }
       artifactCount++;
+      targets.push(target);
     } catch (error) {
+      rejected.push({target, reason: error.message});
       warning(`Skipping unusable coverage report ${file}: ${error.message}`);
     }
   }
-  const result = {files: {}, artifactCount, total: 0, covered: 0};
+  const result = {files: {}, artifactCount, targets: targets.sort(), rejected, total: 0, covered: 0};
   for (const [name, coverage] of Object.entries(lines)) {
     const total = Object.keys(coverage).length;
     const covered = Object.values(coverage).filter(Boolean).length;
@@ -70,9 +77,19 @@ function mergeReports(reports, warning = () => {}) {
     result.total += total;
     result.covered += covered;
   }
-  if (!result.total) throw new Error('No executable plugin lines found in usable reports.');
-  result.percent = result.covered / result.total * 100;
+  result.percent = result.total ? result.covered / result.total * 100 : null;
   return result;
 }
 
-module.exports = {parseReport, findReports, mergeReports, relativeName};
+function comparisonIssues(base, pr) {
+  const issues = [];
+  for (const [label, side, other] of [['PR', pr, base], ['Base', base, pr]]) {
+    const missing = other.targets.filter(target => !side.targets.includes(target));
+    if (missing.length) issues.push(`${label} missing usable targets: ${missing.join(', ')}`);
+    for (const {target, reason} of side.rejected) issues.push(`${label} rejected target ${target}: ${reason}`);
+    if (!side.targets.length) issues.push(`${label} has no usable coverage targets.`);
+  }
+  return issues;
+}
+
+module.exports = {parseReport, findReports, mergeReports, relativeName, comparisonIssues};

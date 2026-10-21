@@ -384,11 +384,13 @@ runs:
         ADDITIONAL_STUFF: ${{ inputs.additional_phpunit_arguments }}
         FAIL_ON_EMPTY: ${{ inputs.fail_on_empty_test_suite }}
         XDEBUG_MODE: coverage
+        PREPARE_COVERAGE: ${{ github.action_path }}/prepare-coverage.php
       run: |
         PHPUNIT="$GITHUB_WORKSPACE/moodle/vendor/bin/phpunit"
         PLUGIN_FULL="$GITHUB_WORKSPACE/moodle/$resolved_plugin_path"
         COVERAGE_DIR="$GITHUB_WORKSPACE/coverage"
         mkdir -p "$COVERAGE_DIR"
+        rm -f "$COVERAGE_DIR/clover.xml" "$COVERAGE_DIR/summary.txt" "$COVERAGE_DIR/metadata.json"
         COVERAGE_ARGS=("--coverage-clover=$COVERAGE_DIR/clover.xml" "--coverage-text=$COVERAGE_DIR/summary.txt")
         EXTRA=""
         if [ "$FAIL_ON_EMPTY" = "true" ]; then
@@ -399,7 +401,12 @@ runs:
           "$PHPUNIT" -c "$PLUGIN_FULL/phpunit.xml" --testdox --colors $EXTRA "${COVERAGE_ARGS[@]}" $ADDITIONAL_STUFF
         else
           echo "Running phpunit on ${component} with testsuite from Moodle phpunit.xml"
-          "$PHPUNIT" -c "$GITHUB_WORKSPACE/moodle/phpunit.xml" --testsuite "${component}_testsuite" --testdox --colors $EXTRA "${COVERAGE_ARGS[@]}" $ADDITIONAL_STUFF
+          CONFIG=$(mktemp "$GITHUB_WORKSPACE/moodle/phpunit-coverage-XXXXXX.xml")
+          trap 'rm -f "$CONFIG"' EXIT
+          PHPUNIT_MAJOR=$("$PHPUNIT" --version | sed -En 's/^PHPUnit ([0-9]+).*/\1/p')
+          php "$PREPARE_COVERAGE" \
+            "$GITHUB_WORKSPACE/moodle/phpunit.xml" "$CONFIG" "$PLUGIN_FULL" "$PHPUNIT_MAJOR"
+          "$PHPUNIT" -c "$CONFIG" --testsuite "${component}_testsuite" --testdox --colors $EXTRA "${COVERAGE_ARGS[@]}" $ADDITIONAL_STUFF
         fi
 
     - name: Resolve coverage artifact metadata
@@ -412,6 +419,11 @@ runs:
         OS: ${{ inputs.os }}
         MOODLE_REPOSITORY: ${{ inputs.moodle_repository }}
       run: |
+        if [ ! -s "$GITHUB_WORKSPACE/coverage/clover.xml" ]; then
+          echo "No Clover report was generated; skipping coverage artifact."
+          echo "coverage_artifact_name=" >> "$GITHUB_ENV"
+          exit 0
+        fi
         raw="coverage-${component}-${MOODLE}-php${PHP}-${DBTYPE}-${OS}-${MOODLE_REPOSITORY}"
         artifact_name=$(printf '%s' "$raw" | tr '/:@ ' '----' | tr -cd 'A-Za-z0-9_.-')
         echo "coverage_artifact_name=$artifact_name" >> "$GITHUB_ENV"

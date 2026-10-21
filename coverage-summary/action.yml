@@ -28,6 +28,9 @@ runs:
         github-token: ${{ github.token }}
         script: |
           const fs = require('fs');
+          const os = require('os');
+          const path = require('path');
+          const {execFileSync} = require('child_process');
           try {
             const {owner, repo} = context.repo;
             const baseBranch = context.payload.pull_request.base.ref;
@@ -56,12 +59,34 @@ runs:
                 per_page: 100,
               });
               const matches = artifacts.filter((artifact) => artifact.name.startsWith(prefix) && !artifact.expired);
-              if (matches.length > 0) {
+              let usable = false;
+              for (const artifact of matches) {
+                const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'coverage-baseline-'));
+                try {
+                  const response = await github.rest.actions.downloadArtifact({
+                    owner, repo, artifact_id: artifact.id, archive_format: 'zip',
+                  });
+                  const archive = path.join(dir, 'artifact.zip');
+                  fs.writeFileSync(archive, Buffer.from(response.data));
+                  const entries = execFileSync('unzip', ['-Z1', archive], {encoding: 'utf8'}).trim().split('\n');
+                  if (!entries.includes('clover.xml')) continue;
+                  const xml = execFileSync('unzip', ['-p', archive, 'clover.xml'], {encoding: 'utf8', maxBuffer: 64 * 1024 * 1024});
+                  if (!/<coverage\b/.test(xml) || !/<file\b/.test(xml)) continue;
+                  usable = true;
+                  break;
+                } catch (error) {
+                  core.warning(`Skipping unusable coverage artifact ${artifact.name}: ${error.message}`);
+                } finally {
+                  fs.rmSync(dir, {recursive: true, force: true});
+                }
+              }
+              if (usable) {
                 fs.appendFileSync(process.env.GITHUB_ENV, `base_coverage_run_id=${run.id}\n`);
                 fs.appendFileSync(process.env.GITHUB_ENV, 'base_coverage_artifacts_found=true\n');
                 core.notice(`Found ${matches.length} base coverage artifacts in run ${run.id} on ${baseBranch}.`);
                 return;
               }
+              core.notice(`No usable Clover report in run ${run.id}; trying older baseline runs.`);
             }
 
             fs.appendFileSync(process.env.GITHUB_ENV, 'base_coverage_run_id=\n');
@@ -160,10 +185,12 @@ runs:
             }
 
             const normalizedPluginPath = (pluginPath || '').replace(/^\/+|\/+$/g, '').replace(/^public\//, '');
-            if (normalizedPluginPath && relative.startsWith(`${normalizedPluginPath}/`)) {
-              relative = relative.slice(normalizedPluginPath.length + 1);
+            if (!normalizedPluginPath || normalizedPluginPath.split('/').some(part => !part || part === '.' || part === '..')) {
+              return '';
             }
-
+            if (!relative.startsWith(`${normalizedPluginPath}/`)) return '';
+            relative = relative.slice(normalizedPluginPath.length + 1);
+            if (relative.split('/').some(part => !part || part === '.' || part === '..')) return '';
             return relative;
           }
 
@@ -210,6 +237,7 @@ runs:
               delete file.lines;
             }
             merged.total = total;
+            if (total === 0) throw new Error('No executable plugin lines found; check Clover reports and plugin-path metadata.');
             merged.covered = covered;
             merged.percent = pct(covered, total);
             return merged;

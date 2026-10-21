@@ -6,7 +6,9 @@ function targetName(row) {
     if (typeof row[key] !== 'string' || !row[key]) throw new Error(`Missing coverage target dimension: ${key}`);
   }
   // Encoding each dimension independently avoids collisions caused by sanitizing slashes.
-  return `coverage-target-${keys.map(key => encodeURIComponent(row[key])).join('--')}`;
+  const experimental = row.experimental ?? false;
+  if (![true, false, 'true', 'false'].includes(experimental)) throw new Error('Invalid experimental coverage dimension');
+  return `coverage-target-${keys.map(key => encodeURIComponent(row[key])).join('--')}--experimental-${String(experimental)}`;
 }
 
 function expectedTargets(rows) {

@@ -19,6 +19,14 @@ runs:
         path: ${{ github.workspace }}/coverage-summary/pr
         merge-multiple: false
 
+    - name: Download current run expected targets
+      if: ${{ always() }}
+      continue-on-error: true
+      uses: actions/download-artifact@v4
+      with:
+        name: coverage-expected-targets
+        path: ${{ github.workspace }}/coverage-summary/pr/coverage-expected-targets
+
     - name: Finding base branch coverage run
       if: ${{ always() && github.event_name == 'pull_request' }}
       uses: actions/github-script@v7
@@ -32,7 +40,7 @@ runs:
           const os = require('os');
           const path = require('path');
           const {execFileSync} = require('child_process');
-          const {parseReport, readExpectedTargets} = require(process.env.REPORTS_MODULE);
+          const {parseReport, readExpectedTargets, comparisonIssues} = require(process.env.REPORTS_MODULE);
           try {
             const {owner, repo} = context.repo;
             const baseBranch = context.payload.pull_request.base.ref;
@@ -67,18 +75,19 @@ runs:
                 continue;
               }
               const manifestDir = fs.mkdtempSync(path.join(os.tmpdir(), 'coverage-manifest-'));
+              let expectedTargets;
               try {
                 const response = await github.rest.actions.downloadArtifact({owner, repo, artifact_id: manifestArtifact.id, archive_format: 'zip'});
                 const archive = path.join(manifestDir, 'manifest.zip');
                 fs.writeFileSync(archive, Buffer.from(response.data));
-                readExpectedTargets(execFileSync('unzip', ['-p', archive, 'expected-targets.json'], {encoding: 'utf8', maxBuffer: 1024 * 1024}));
+                expectedTargets = readExpectedTargets(execFileSync('unzip', ['-p', archive, 'expected-targets.json'], {encoding: 'utf8', maxBuffer: 1024 * 1024}));
               } catch (error) {
                 core.warning(`Run ${run.id} has an unusable expected-target manifest: ${error.message}`);
                 continue;
               } finally {
                 fs.rmSync(manifestDir, {recursive: true, force: true});
               }
-              let usable = false;
+              const candidate = {expectedTargets, targets: [], rejected: []};
               for (const artifact of matches.filter(artifact => artifact.name !== 'coverage-expected-targets')) {
                 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'coverage-baseline-'));
                 try {
@@ -88,24 +97,24 @@ runs:
                   const archive = path.join(dir, 'artifact.zip');
                   fs.writeFileSync(archive, Buffer.from(response.data));
                   const entries = execFileSync('unzip', ['-Z1', archive], {encoding: 'utf8'}).trim().split('\n');
-                  if (!entries.includes('lines.json') || !entries.includes('metadata.json')) continue;
+                  if (!entries.includes('lines.json') || !entries.includes('metadata.json')) throw new Error('Missing coverage report or metadata');
                   const read = name => execFileSync('unzip', ['-p', archive, name], {encoding: 'utf8', maxBuffer: 64 * 1024 * 1024});
                   parseReport(read('metadata.json'), read('lines.json'));
-                  usable = true;
-                  break;
+                  candidate.targets.push(artifact.name);
                 } catch (error) {
+                  candidate.rejected.push({target: artifact.name, reason: error.message});
                   core.warning(`Skipping unusable coverage artifact ${artifact.name}: ${error.message}`);
                 } finally {
                   fs.rmSync(dir, {recursive: true, force: true});
                 }
               }
-              if (usable) {
+              if (comparisonIssues(candidate, candidate).length === 0) {
                 fs.appendFileSync(process.env.GITHUB_ENV, `base_coverage_run_id=${run.id}\n`);
                 fs.appendFileSync(process.env.GITHUB_ENV, 'base_coverage_artifacts_found=true\n');
-                core.notice(`Found ${matches.length} base coverage artifacts in run ${run.id} on ${baseBranch}.`);
+                core.notice(`Found complete baseline with ${candidate.targets.length} coverage targets in run ${run.id} on ${baseBranch}.`);
                 return;
               }
-              core.notice(`No usable executable-line report in run ${run.id}; trying older baseline runs.`);
+              core.notice(`Incomplete coverage in run ${run.id}; trying older baseline runs.`);
             }
 
             fs.appendFileSync(process.env.GITHUB_ENV, 'base_coverage_run_id=\n');
@@ -125,6 +134,17 @@ runs:
         pattern: ${{ inputs.artifact-prefix }}*
         path: ${{ github.workspace }}/coverage-summary/base
         merge-multiple: false
+        run-id: ${{ env.base_coverage_run_id }}
+        github-token: ${{ github.token }}
+        repository: ${{ github.repository }}
+
+    - name: Download base run expected targets
+      if: ${{ always() && github.event_name == 'pull_request' && env.base_coverage_artifacts_found == 'true' }}
+      continue-on-error: true
+      uses: actions/download-artifact@v4
+      with:
+        name: coverage-expected-targets
+        path: ${{ github.workspace }}/coverage-summary/base/coverage-expected-targets
         run-id: ${{ env.base_coverage_run_id }}
         github-token: ${{ github.token }}
         repository: ${{ github.repository }}

@@ -124,6 +124,13 @@ matrix rows (`suite: 'phpunit'`, `moodle`, `php`, `dbtype`, `os`,
 Missing/invalid manifests withhold numeric comparisons. Baseline runs predating
 the manifest must be refreshed.
 
+Target identities include the normalized `experimental` flag, so legacy matrices
+containing both `false` and `true` remain distinct. Baseline selection uses the
+newest successful push with a complete expected matrix and no rejected reports,
+continuing to older runs when a newer candidate is incomplete. The mandatory
+manifest is downloaded independently of `artifact-prefix`, including when the
+report prefix is `coverage-target-`.
+
 The line map is generated locally from PHPUnit's raw coverage export, which is
 deleted before upload. It preserves executable method-start lines that Clover
 represents as methods, without counting non-executable method declarations.

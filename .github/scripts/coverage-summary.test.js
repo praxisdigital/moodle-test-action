@@ -223,6 +223,58 @@ test('expectations include experimental PHPUnit targets and exclude Behat using 
   assert.ok(reports.comparisonIssues(missingExperimental, missingExperimental).some(issue => issue.includes(targetName(b))));
 });
 
+test('legacy experimental Cartesian dimension remains distinct and normalizes string inputs', () => {
+  const {legacyRows} = require('./resolve-matrix');
+  const {rows} = legacyRows({phpVersions: ['8.3'], moodleVersions: ['MOODLE_500_STABLE'],
+    repositories: ['moodle/moodle'], os: ['ubuntu-latest'], dbTypes: ['mysqli'],
+    experimental: [false, true], excludes: [], suites: ['phpunit'], dependencies: ''});
+  const manifest = expectedTargets(rows);
+  assert.equal(manifest.targets.length, 2);
+  assert.notEqual(manifest.targets[0], manifest.targets[1]);
+  for (const row of rows) assert.equal(targetName(row), targetName({...row, experimental: String(row.experimental)}));
+});
+
+test('both manifest downloads are independent of the report artifact prefix', () => {
+  const downloads = action.runs.steps.filter(step => step.uses === 'actions/download-artifact@v4');
+  for (const side of ['pr', 'base']) {
+    const manifestDownload = downloads.find(step => step.with.name === 'coverage-expected-targets' && step.with.path.endsWith(`/${side}/coverage-expected-targets`));
+    assert.ok(manifestDownload);
+    assert.equal(manifestDownload.with.pattern, undefined);
+    const reportDownload = downloads.find(step => step.with.path.endsWith(`/${side}`));
+    assert.equal(reportDownload.with.pattern.replace('${{ inputs.artifact-prefix }}', 'coverage-target-'), 'coverage-target-*');
+  }
+});
+
+test('baseline search skips newest incomplete experimental matrix for older complete matrix with custom prefix', async () => {
+  const dir = scratch();
+  let selected = '';
+  try {
+    const archives = [
+      {'expected-targets.json': JSON.stringify({version: 1, targets: [targetA, targetB]})},
+      {'metadata.json': metadata, 'lines.json': report({1: true})},
+    ];
+    archives.forEach((files, id) => {
+      const folder = path.join(dir, String(id));
+      fs.mkdirSync(folder);
+      for (const [name, content] of Object.entries(files)) fs.writeFileSync(path.join(folder, name), content);
+      execFileSync('zip', ['-q', path.join(dir, `${id}.zip`), ...Object.keys(files)], {cwd: folder});
+    });
+    await vm.runInNewContext(`(async () => {${action.runs.steps.find(s => s.name === 'Finding base branch coverage run').with.script}\n})()`, {
+      Buffer, require: name => name === 'fs' ? {...fs, appendFileSync: (file, value) => { selected += value; }} : require(name),
+      process: {env: {REPORTS_MODULE: path.resolve('coverage-summary/reports.js'), ARTIFACT_PREFIX: 'coverage-target-', GITHUB_ENV: '/env'}},
+      context: {repo: {owner: 'test', repo: 'plugin'}, payload: {pull_request: {base: {ref: 'main'}}}},
+      core: {notice: () => {}, warning: assert.fail},
+      github: {paginate: async (method, params) => method === 'runs' ? [{id: 2}, {id: 1}]
+        : [{id: 0, name: 'coverage-expected-targets'}, {id: 1, name: targetA}, ...(params.run_id === 1 ? [{id: 1, name: targetB}] : [])],
+        rest: {actions: {getWorkflowRun: async () => ({data: {workflow_id: 7}}), listWorkflowRuns: 'runs', listWorkflowRunArtifacts: 'artifacts',
+          downloadArtifact: async ({artifact_id}) => ({data: fs.readFileSync(path.join(dir, `${artifact_id}.zip`))}),
+        }},
+      },
+    });
+    assert.match(selected, /base_coverage_run_id=1\n/);
+  } finally { fs.rmSync(dir, {recursive: true, force: true}); }
+});
+
 test('fallback config scopes plugin source for PHPUnit 9 and 11', () => {
   const dir = scratch();
   try {

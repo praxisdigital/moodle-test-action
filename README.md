@@ -105,6 +105,13 @@ until a usable executable-line report is found. Baseline discovery and merging
 share metadata, path, and executable-line validation. Old Clover-only artifacts
 are skipped: run the base-branch workflow again after upgrading.
 
+Numeric comparisons require identical successfully parsed target sets (identified
+by the stable coverage artifact names) and no rejected reports on either side.
+Otherwise the PR comment reports **Coverage incomplete / not comparable** and
+lists missing/rejected targets, withholding deltas and file additions/removals.
+Failed test jobs still upload valid reports; failed jobs without a report cannot
+silently turn a partial matrix into a comparable diff.
+
 The line map is generated locally from PHPUnit's raw coverage export, which is
 deleted before upload. It preserves executable method-start lines that Clover
 represents as methods, without counting non-executable method declarations.

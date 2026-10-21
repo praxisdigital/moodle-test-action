@@ -123,6 +123,50 @@ test('producer skips artifacts with missing or empty exact line reports', () => 
   } finally { fs.rmSync(dir, {recursive: true, force: true}); }
 });
 
+test('incomplete or rejected target sets never produce numeric deltas or removed-file rows', async () => {
+  const cases = [
+    {base: {a: report({1: true, 2: false}), b: report({1: false, 2: true})}, pr: {a: report({1: true, 2: false})}, expected: /PR missing usable targets: b/},
+    {base: {a: report({1: true})}, pr: {b: report({1: true})}, expected: /Base missing usable targets: b/},
+    {base: {a: report({1: true}), b: '{'}, pr: {a: report({1: true})}, expected: /Base rejected target b/},
+    {base: {a: report({1: true})}, pr: {a: report({1: true}), b: '{'}, expected: /PR rejected target b/},
+    {base: {a: report({1: true})}, pr: {a: '{'}, expected: /PR has no usable coverage targets/},
+    {base: {a: report({1: true})}, pr: {}, expected: /did not produce any coverage artifacts/},
+  ];
+  for (const fixture of cases) {
+    const dir = scratch();
+    let body;
+    try {
+      for (const side of ['base', 'pr']) {
+        for (const [target, lines] of Object.entries(fixture[side])) artifact(path.join(dir, 'coverage-summary', side, target), lines);
+      }
+      await vm.runInNewContext(`(async () => {${action.runs.steps.find(s => s.name === 'Commenting combined PR coverage diff').with.script}\n})()`, {
+        require, process: {env: {GITHUB_WORKSPACE: dir, REPORTS_MODULE: path.resolve('coverage-summary/reports.js'), BASE_ARTIFACTS_FOUND: 'true'}},
+        context: {repo: {owner: 'test', repo: 'plugin'}, payload: {pull_request: {number: 4}}},
+        core: {warning: () => {}},
+        github: {paginate: async () => [], rest: {issues: {
+          listComments: () => {}, createComment: async value => { body = value.body; },
+        }}},
+      });
+      assert.match(body, /Coverage incomplete \/ not comparable/);
+      assert.match(body, fixture.expected);
+      assert.doesNotMatch(body, /\| Statements \||\| File \||\d+\.\d+%|\| removed \|/);
+    } finally { fs.rmSync(dir, {recursive: true, force: true}); }
+  }
+});
+
+test('discovers metadata-only artifacts as rejected targets instead of silently losing them', () => {
+  const dir = scratch();
+  try {
+    artifact(path.join(dir, 'a'), report({1: true}));
+    fs.mkdirSync(path.join(dir, 'b'));
+    fs.writeFileSync(path.join(dir, 'b/metadata.json'), metadata);
+    const merged = reports.mergeReports(reports.findReports(dir));
+    assert.deepEqual(merged.targets, ['a']);
+    assert.equal(merged.rejected[0].target, 'b');
+    assert.equal(reports.comparisonIssues(merged, merged).length, 2);
+  } finally { fs.rmSync(dir, {recursive: true, force: true}); }
+});
+
 test('fallback config scopes plugin source for PHPUnit 9 and 11', () => {
   const dir = scratch();
   try {

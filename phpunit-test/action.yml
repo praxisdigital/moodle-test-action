@@ -424,6 +424,7 @@ runs:
         OS: ${{ inputs.os }}
         MOODLE_REPOSITORY: ${{ inputs.moodle_repository }}
         TARGETS_MODULE: ${{ github.action_path }}/../coverage-summary/targets.js
+        EXPERIMENTAL: ${{ inputs.experimental }}
       run: |
         if [ ! -s "$GITHUB_WORKSPACE/coverage/clover.xml" ] || [ ! -s "$GITHUB_WORKSPACE/coverage/lines.json" ]; then
           echo "No complete coverage report was generated; skipping coverage artifact."
@@ -432,7 +433,8 @@ runs:
         fi
         node -e 'const fs = require("fs"), {targetName} = require(process.env.TARGETS_MODULE);
           const target = targetName({moodle: process.env.MOODLE, php: process.env.PHP,
-            dbtype: process.env.DBTYPE, os: process.env.OS, moodle_repository: process.env.MOODLE_REPOSITORY});
+            dbtype: process.env.DBTYPE, os: process.env.OS, moodle_repository: process.env.MOODLE_REPOSITORY,
+            experimental: process.env.EXPERIMENTAL});
           fs.appendFileSync(process.env.GITHUB_ENV, `coverage_artifact_name=${target}\n`);'
         mkdir -p "$GITHUB_WORKSPACE/coverage"
         PLUGIN_PATH="$resolved_plugin_path" php -r '

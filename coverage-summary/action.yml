@@ -24,6 +24,7 @@ runs:
       uses: actions/github-script@v7
       env:
         ARTIFACT_PREFIX: ${{ inputs.artifact-prefix }}
+        REPORTS_MODULE: ${{ github.action_path }}/reports.js
       with:
         github-token: ${{ github.token }}
         script: |
@@ -31,6 +32,7 @@ runs:
           const os = require('os');
           const path = require('path');
           const {execFileSync} = require('child_process');
+          const {parseReport} = require(process.env.REPORTS_MODULE);
           try {
             const {owner, repo} = context.repo;
             const baseBranch = context.payload.pull_request.base.ref;
@@ -69,9 +71,9 @@ runs:
                   const archive = path.join(dir, 'artifact.zip');
                   fs.writeFileSync(archive, Buffer.from(response.data));
                   const entries = execFileSync('unzip', ['-Z1', archive], {encoding: 'utf8'}).trim().split('\n');
-                  if (!entries.includes('clover.xml')) continue;
-                  const xml = execFileSync('unzip', ['-p', archive, 'clover.xml'], {encoding: 'utf8', maxBuffer: 64 * 1024 * 1024});
-                  if (!/<coverage\b/.test(xml) || !/<file\b/.test(xml)) continue;
+                  if (!entries.includes('lines.json') || !entries.includes('metadata.json')) continue;
+                  const read = name => execFileSync('unzip', ['-p', archive, name], {encoding: 'utf8', maxBuffer: 64 * 1024 * 1024});
+                  parseReport(read('metadata.json'), read('lines.json'));
                   usable = true;
                   break;
                 } catch (error) {
@@ -86,7 +88,7 @@ runs:
                 core.notice(`Found ${matches.length} base coverage artifacts in run ${run.id} on ${baseBranch}.`);
                 return;
               }
-              core.notice(`No usable Clover report in run ${run.id}; trying older baseline runs.`);
+              core.notice(`No usable executable-line report in run ${run.id}; trying older baseline runs.`);
             }
 
             fs.appendFileSync(process.env.GITHUB_ENV, 'base_coverage_run_id=\n');
@@ -117,135 +119,15 @@ runs:
       env:
         ARTIFACT_PREFIX: ${{ inputs.artifact-prefix }}
         BASE_ARTIFACTS_FOUND: ${{ env.base_coverage_artifacts_found }}
+        REPORTS_MODULE: ${{ github.action_path }}/reports.js
       with:
         github-token: ${{ github.token }}
         script: |
-          const fs = require('fs');
           const path = require('path');
           const {owner, repo} = context.repo;
           const issue_number = context.payload.pull_request.number;
           const marker = '<!-- moodle-test-action-coverage-summary -->';
-
-          function decodeXml(value) {
-            return value
-              .replace(/&quot;/g, '"')
-              .replace(/&apos;/g, "'")
-              .replace(/&lt;/g, '<')
-              .replace(/&gt;/g, '>')
-              .replace(/&amp;/g, '&');
-          }
-
-          function attrs(tag) {
-            const result = {};
-            for (const match of tag.matchAll(/([A-Za-z_:][A-Za-z0-9_.:-]*)="([^"]*)"/g)) {
-              result[match[1]] = decodeXml(match[2]);
-            }
-            return result;
-          }
-
-          function findCloverFiles(dir) {
-            const result = [];
-            if (!fs.existsSync(dir)) {
-              return result;
-            }
-            const stack = [dir];
-            while (stack.length > 0) {
-              const current = stack.pop();
-              for (const entry of fs.readdirSync(current, {withFileTypes: true})) {
-                const full = path.join(current, entry.name);
-                if (entry.isDirectory()) {
-                  stack.push(full);
-                } else if (entry.isFile() && entry.name === 'clover.xml') {
-                  result.push(full);
-                }
-              }
-            }
-            return result.sort();
-          }
-
-          function readCoverageMetadata(cloverPath) {
-            const metadataPath = path.join(path.dirname(cloverPath), 'metadata.json');
-            if (!fs.existsSync(metadataPath)) {
-              return {};
-            }
-
-            try {
-              return JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
-            } catch (error) {
-              core.warning(`Could not parse coverage metadata at ${metadataPath}: ${error.message}`);
-              return {};
-            }
-          }
-
-          function relativeName(name, pluginPath) {
-            const moodleIndex = name.indexOf('/moodle/');
-            let relative = moodleIndex >= 0 ? name.slice(moodleIndex + '/moodle/'.length) : name;
-            if (relative.startsWith('public/')) {
-              relative = relative.slice('public/'.length);
-            }
-
-            const normalizedPluginPath = (pluginPath || '').replace(/^\/+|\/+$/g, '').replace(/^public\//, '');
-            if (!normalizedPluginPath || normalizedPluginPath.split('/').some(part => !part || part === '.' || part === '..')) {
-              return '';
-            }
-            if (!relative.startsWith(`${normalizedPluginPath}/`)) return '';
-            relative = relative.slice(normalizedPluginPath.length + 1);
-            if (relative.split('/').some(part => !part || part === '.' || part === '..')) return '';
-            return relative;
-          }
-
-          function addLine(file, lineNumber, isCovered) {
-            if (!file.lines[lineNumber]) {
-              file.lines[lineNumber] = false;
-            }
-            file.lines[lineNumber] = file.lines[lineNumber] || isCovered;
-          }
-
-          function mergeCloverFiles(files) {
-            const merged = {files: {}, artifactCount: files.length};
-            for (const filePath of files) {
-              const metadata = readCoverageMetadata(filePath);
-              const xml = fs.readFileSync(filePath, 'utf8');
-              for (const match of xml.matchAll(/<file\b[^>]*name="[^"]*"[^>]*>[\s\S]*?<\/file>/g)) {
-                const block = match[0];
-                const fileTag = block.match(/<file\b[^>]*>/)[0];
-                const name = relativeName(attrs(fileTag).name || '', metadata.pluginPath);
-                if (!name) {
-                  continue;
-                }
-                if (!merged.files[name]) {
-                  merged.files[name] = {lines: {}};
-                }
-                for (const lineMatch of block.matchAll(/<line\b[^>]*>/g)) {
-                  const lineAttrs = attrs(lineMatch[0]);
-                  if (lineAttrs.type !== 'stmt' || !lineAttrs.num) {
-                    continue;
-                  }
-                  addLine(merged.files[name], lineAttrs.num, Number(lineAttrs.count || 0) > 0);
-                }
-              }
-            }
-
-            let total = 0;
-            let covered = 0;
-            for (const file of Object.values(merged.files)) {
-              file.total = Object.keys(file.lines).length;
-              file.covered = Object.values(file.lines).filter(Boolean).length;
-              file.percent = pct(file.covered, file.total);
-              total += file.total;
-              covered += file.covered;
-              delete file.lines;
-            }
-            merged.total = total;
-            if (total === 0) throw new Error('No executable plugin lines found; check Clover reports and plugin-path metadata.');
-            merged.covered = covered;
-            merged.percent = pct(covered, total);
-            return merged;
-          }
-
-          function pct(covered, total) {
-            return total > 0 ? (covered / total) * 100 : 0;
-          }
+          const {findReports, mergeReports} = require(process.env.REPORTS_MODULE);
 
           function fmt(value) {
             return `${value.toFixed(2)}%`;
@@ -315,19 +197,19 @@ runs:
             return lines.join('\n');
           }
 
-          const prFiles = findCloverFiles(path.join(process.env.GITHUB_WORKSPACE, 'coverage-summary', 'pr'));
-          const baseFiles = findCloverFiles(path.join(process.env.GITHUB_WORKSPACE, 'coverage-summary', 'base'));
+          const prFiles = findReports(path.join(process.env.GITHUB_WORKSPACE, 'coverage-summary', 'pr'));
+          const baseFiles = findReports(path.join(process.env.GITHUB_WORKSPACE, 'coverage-summary', 'base'));
           let body;
 
           try {
             if (prFiles.length === 0) {
-              body = reason('No coverage diff is available because this PR run did not produce any `clover.xml` coverage artifacts.');
+              body = reason('No coverage diff is available because this PR run did not produce any `lines.json` coverage artifacts.');
             } else if (process.env.BASE_ARTIFACTS_FOUND !== 'true') {
               body = reason('No coverage diff is available because no base-branch coverage artifacts were found, or the workflow token could not read artifacts. Run this workflow on the base branch first and ensure the workflow has `actions: read`, then rerun the PR workflow.');
             } else if (baseFiles.length === 0) {
-              body = reason('No coverage diff is available because base-branch coverage artifacts could not be downloaded or did not contain `clover.xml`.');
+              body = reason('No coverage diff is available because base-branch coverage artifacts could not be downloaded or did not contain `lines.json`.');
             } else {
-              body = buildDiff(mergeCloverFiles(baseFiles), mergeCloverFiles(prFiles));
+              body = buildDiff(mergeReports(baseFiles, core.warning), mergeReports(prFiles, core.warning));
             }
           } catch (error) {
             body = reason(`No coverage diff is available because coverage parsing failed: ${error.message}`);

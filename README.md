@@ -87,7 +87,8 @@ When using the root action, `action_ref` defaults to the same ref as `uses: prax
 
 ## Code coverage
 
-PHPUnit runs enable Xdebug coverage and upload Clover XML, a text summary, and
+PHPUnit runs enable Xdebug coverage and upload Clover XML, an exact executable-line
+JSON map, a text summary, and
 plugin-path metadata as a `coverage-*` artifact for each matrix target, including
 failed runs that produced reports. The reusable workflow automatically runs a
 final coverage job on pull requests, merges the matrix reports, and updates one
@@ -98,9 +99,15 @@ Fallback runs using Moodle's generated PHPUnit configuration replace its source
 filter with the plugin directory (excluding `tests` and `vendor`). Plugin-owned
 PHPUnit configurations retain their source filters. The summary also rejects
 files outside the plugin path and requires valid plugin-path metadata. Artifacts
-are published only when a non-empty Clover report exists; baseline discovery
+are published only when non-empty Clover and executable-line reports exist; baseline discovery
 skips older metadata-only artifacts and continues to the next successful run
-until a Clover report is found.
+until a usable executable-line report is found. Baseline discovery and merging
+share metadata, path, and executable-line validation. Old Clover-only artifacts
+are skipped: run the base-branch workflow again after upgrading.
+
+The line map is generated locally from PHPUnit's raw coverage export, which is
+deleted before upload. It preserves executable method-start lines that Clover
+represents as methods, without counting non-executable method declarations.
 
 Keep the caller workflow enabled for pushes to PR base branches as shown above
 so baseline artifacts are available. The caller needs `actions: read` and

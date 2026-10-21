@@ -385,13 +385,19 @@ runs:
         FAIL_ON_EMPTY: ${{ inputs.fail_on_empty_test_suite }}
         XDEBUG_MODE: coverage
         PREPARE_COVERAGE: ${{ github.action_path }}/prepare-coverage.php
+        EXPORT_LINES: ${{ github.action_path }}/export-lines.php
       run: |
         PHPUNIT="$GITHUB_WORKSPACE/moodle/vendor/bin/phpunit"
         PLUGIN_FULL="$GITHUB_WORKSPACE/moodle/$resolved_plugin_path"
         COVERAGE_DIR="$GITHUB_WORKSPACE/coverage"
         mkdir -p "$COVERAGE_DIR"
         rm -f "$COVERAGE_DIR/clover.xml" "$COVERAGE_DIR/summary.txt" "$COVERAGE_DIR/metadata.json"
+        rm -f "$COVERAGE_DIR/lines.json"
+        RAW_COVERAGE=$(mktemp "$RUNNER_TEMP/phpunit-coverage-XXXXXX.php")
+        export RAW_COVERAGE
+        trap 'if [ -s "$RAW_COVERAGE" ]; then php "$EXPORT_LINES" "$GITHUB_WORKSPACE/moodle/vendor/autoload.php" "$RAW_COVERAGE" "$COVERAGE_DIR/lines.json"; fi; rm -f "$RAW_COVERAGE" "${CONFIG:-}"' EXIT
         COVERAGE_ARGS=("--coverage-clover=$COVERAGE_DIR/clover.xml" "--coverage-text=$COVERAGE_DIR/summary.txt")
+        COVERAGE_ARGS+=("--coverage-php=$RAW_COVERAGE")
         EXTRA=""
         if [ "$FAIL_ON_EMPTY" = "true" ]; then
           EXTRA="--fail-on-empty-test-suite"
@@ -402,7 +408,6 @@ runs:
         else
           echo "Running phpunit on ${component} with testsuite from Moodle phpunit.xml"
           CONFIG=$(mktemp "$GITHUB_WORKSPACE/moodle/phpunit-coverage-XXXXXX.xml")
-          trap 'rm -f "$CONFIG"' EXIT
           PHPUNIT_MAJOR=$("$PHPUNIT" --version | sed -En 's/^PHPUnit ([0-9]+).*/\1/p')
           php "$PREPARE_COVERAGE" \
             "$GITHUB_WORKSPACE/moodle/phpunit.xml" "$CONFIG" "$PLUGIN_FULL" "$PHPUNIT_MAJOR"
@@ -419,8 +424,8 @@ runs:
         OS: ${{ inputs.os }}
         MOODLE_REPOSITORY: ${{ inputs.moodle_repository }}
       run: |
-        if [ ! -s "$GITHUB_WORKSPACE/coverage/clover.xml" ]; then
-          echo "No Clover report was generated; skipping coverage artifact."
+        if [ ! -s "$GITHUB_WORKSPACE/coverage/clover.xml" ] || [ ! -s "$GITHUB_WORKSPACE/coverage/lines.json" ]; then
+          echo "No complete coverage report was generated; skipping coverage artifact."
           echo "coverage_artifact_name=" >> "$GITHUB_ENV"
           exit 0
         fi

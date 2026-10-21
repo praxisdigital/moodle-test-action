@@ -97,7 +97,7 @@ runs:
       uses: shivammathur/setup-php@v2
       with:
         php-version: ${{ inputs.php }}
-        coverage: none
+        coverage: xdebug
         ini-values: 'max_input_vars=5000'
         extensions: sqlsrv, pdo_sqlsrv
 
@@ -383,17 +383,49 @@ runs:
       env:
         ADDITIONAL_STUFF: ${{ inputs.additional_phpunit_arguments }}
         FAIL_ON_EMPTY: ${{ inputs.fail_on_empty_test_suite }}
+        XDEBUG_MODE: coverage
       run: |
         PHPUNIT="$GITHUB_WORKSPACE/moodle/vendor/bin/phpunit"
         PLUGIN_FULL="$GITHUB_WORKSPACE/moodle/$resolved_plugin_path"
+        COVERAGE_DIR="$GITHUB_WORKSPACE/coverage"
+        mkdir -p "$COVERAGE_DIR"
+        COVERAGE_ARGS=("--coverage-clover=$COVERAGE_DIR/clover.xml" "--coverage-text=$COVERAGE_DIR/summary.txt")
         EXTRA=""
         if [ "$FAIL_ON_EMPTY" = "true" ]; then
           EXTRA="--fail-on-empty-test-suite"
         fi
         if [ -f "$PLUGIN_FULL/phpunit.xml" ]; then
           echo "Running phpunit on ${component} with plugin phpunit.xml"
-          "$PHPUNIT" -c "$PLUGIN_FULL/phpunit.xml" --testdox --colors $EXTRA $ADDITIONAL_STUFF
+          "$PHPUNIT" -c "$PLUGIN_FULL/phpunit.xml" --testdox --colors $EXTRA "${COVERAGE_ARGS[@]}" $ADDITIONAL_STUFF
         else
           echo "Running phpunit on ${component} with testsuite from Moodle phpunit.xml"
-          "$PHPUNIT" -c "$GITHUB_WORKSPACE/moodle/phpunit.xml" --testsuite "${component}_testsuite" --testdox --colors $EXTRA $ADDITIONAL_STUFF
+          "$PHPUNIT" -c "$GITHUB_WORKSPACE/moodle/phpunit.xml" --testsuite "${component}_testsuite" --testdox --colors $EXTRA "${COVERAGE_ARGS[@]}" $ADDITIONAL_STUFF
         fi
+
+    - name: Resolve coverage artifact metadata
+      if: ${{ always() && env.resolved_plugin_path != '' }}
+      shell: bash
+      env:
+        MOODLE: ${{ inputs.moodle }}
+        PHP: ${{ inputs.php }}
+        DBTYPE: ${{ inputs.dbtype }}
+        OS: ${{ inputs.os }}
+        MOODLE_REPOSITORY: ${{ inputs.moodle_repository }}
+      run: |
+        raw="coverage-${component}-${MOODLE}-php${PHP}-${DBTYPE}-${OS}-${MOODLE_REPOSITORY}"
+        artifact_name=$(printf '%s' "$raw" | tr '/:@ ' '----' | tr -cd 'A-Za-z0-9_.-')
+        echo "coverage_artifact_name=$artifact_name" >> "$GITHUB_ENV"
+        mkdir -p "$GITHUB_WORKSPACE/coverage"
+        PLUGIN_PATH="$resolved_plugin_path" php -r '
+          $path = preg_replace("~^public/~", "", trim(getenv("PLUGIN_PATH"), "/"));
+          file_put_contents(getenv("GITHUB_WORKSPACE") . "/coverage/metadata.json",
+            json_encode(["component" => getenv("component"), "pluginPath" => $path]));
+        '
+
+    - name: Upload coverage artifact
+      if: ${{ always() && env.coverage_artifact_name != '' }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ env.coverage_artifact_name }}
+        path: ${{ github.workspace }}/coverage
+        if-no-files-found: warn

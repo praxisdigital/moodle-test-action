@@ -137,7 +137,8 @@ on:
         required: false
 permissions:
   contents: read
-  pull-requests: read
+  actions: read
+  pull-requests: write
   issues: write
   statuses: write
 
@@ -822,3 +823,20 @@ jobs:
           PRIVATE_REPO_TOKEN: ${{ steps.app-token.outputs.token }}
           fail_on_empty_test_suite: ${{ inputs.fail_on_empty_test_suite }}
           checkout_ref: ${{ needs.setup.outputs.checkout_ref }}
+
+  coverage:
+    name: Combined coverage diff
+    needs: [setup, test]
+    if: ${{ always() && github.event_name == 'pull_request' && inputs.run_phpunit == 'true' && needs.setup.outputs.has_tests == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out coverage summary action
+        uses: actions/checkout@v6
+        with:
+          repository: praxisdigital/moodle-test-action
+          ref: ${{ inputs.action_ref }}
+          path: .moodle-test-action
+          persist-credentials: false
+
+      - name: Combine coverage and comment PR diff
+        uses: ./.moodle-test-action/coverage-summary

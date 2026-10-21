@@ -85,6 +85,32 @@ Plugin component and install path are auto-detected from `$plugin->component` in
 
 When using the root action, `action_ref` defaults to the same ref as `uses: praxisdigital/moodle-test-action@...`. The reusable workflow's `action_ref` defaults to `master`; when calling a development ref of `.github/workflows/ci.yml`, pass that same development ref as `action_ref` so setup checks out the matching resolver and catalogue.
 
+## Code coverage
+
+PHPUnit runs enable Xdebug coverage and upload Clover XML, a text summary, and
+plugin-path metadata as a `coverage-*` artifact for each matrix target, including
+failed runs that produced reports. The reusable workflow automatically runs a
+final coverage job on pull requests, merges the matrix reports, and updates one
+PR comment with total and file-by-file coverage differences against the latest
+successful base-branch run with coverage artifacts.
+
+Keep the caller workflow enabled for pushes to PR base branches as shown above
+so baseline artifacts are available. The caller needs `actions: read` and
+`issues: write` and `pull-requests: write` in addition to the normal CI permissions. If no baseline exists,
+the comment explains why a diff is unavailable. When testing a development ref,
+set `action_ref` to the same ref as the reusable workflow.
+
+Users of the root compatibility action must add a final job themselves:
+
+```yaml
+  coverage:
+    needs: PHPUnit
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: praxisdigital/moodle-test-action/coverage-summary@master
+```
+
 ## Behat
 
 Behat runs when:

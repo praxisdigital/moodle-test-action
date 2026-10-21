@@ -94,6 +94,14 @@ final coverage job on pull requests, merges the matrix reports, and updates one
 PR comment with total and file-by-file coverage differences against the latest
 successful base-branch run with coverage artifacts.
 
+Fallback runs using Moodle's generated PHPUnit configuration replace its source
+filter with the plugin directory (excluding `tests` and `vendor`). Plugin-owned
+PHPUnit configurations retain their source filters. The summary also rejects
+files outside the plugin path and requires valid plugin-path metadata. Artifacts
+are published only when a non-empty Clover report exists; baseline discovery
+skips older metadata-only artifacts and continues to the next successful run
+until a Clover report is found.
+
 Keep the caller workflow enabled for pushes to PR base branches as shown above
 so baseline artifacts are available. The caller needs `actions: read` and
 `issues: write` and `pull-requests: write` in addition to the normal CI permissions. If no baseline exists,

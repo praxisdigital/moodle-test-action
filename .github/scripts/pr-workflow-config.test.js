@@ -59,7 +59,7 @@ test('comment uses PR inputs ahead of org variables and ignores default-branch c
       additional_behat_arguments: '--dry-run'
 `));
   const config = resolvePrConfig(pr, {
-    dependencies: 'org/default@master', db_types: '["mysqli"]', php_versions: '["7.4"]',
+    dependencies: 'org/default@master', db_types: '["mysqli"]', php_versions: '["7.4"]', products: '["moodle"]',
     additional_behat_arguments: '--verbose',
   }, 'org');
   assert.equal(config.dependencies, 'org/first@MOODLE_500_STABLE org/second@master');
@@ -72,11 +72,13 @@ test('comment uses PR inputs ahead of org variables and ignores default-branch c
 
 test('missing PR inputs use variable or reusable-workflow defaults, never old caller with', () => {
   const config = resolvePrConfig({}, { dependencies: 'org/variable@main', db_types: '["pgsql"]',
-    php_versions: '["7.4"]' }, 'org');
+    php_versions: '["7.4"]', products: '["workplace"]' }, 'org');
   assert.equal(config.automatic, 'true');
   assert.deepEqual(config.php_versions, []);
   assert.equal(config.dependencies, 'org/variable@main');
   assert.deepEqual(config.db_types, ['pgsql']);
+  assert.equal(config.products, '["workplace"]');
+  assert.equal(resolvePrConfig({}, {}, 'org').products, '');
   assert.equal(resolvePrConfig({}, {}, 'org').dependencies, '');
 });
 

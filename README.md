@@ -59,15 +59,69 @@ These are templates, not active workflows in this repository. Only
 pull requests, pushes to `master`, or manual dispatch it runs `npm test` and
 checks workflow syntax with a pinned `actionlint` binary.
 
-## Defaults
+## Configuration and precedence
 
-With `automatic: 'false'`, the original matrix settings resolve in this order:
+Set organization variables in **Organization Settings → Secrets and variables → Actions → Variables**, or repository variables in the equivalent **Repository Settings** page. Use the names below (for example, `MOODLE_PRODUCTS`), with the value shown as plain text; do not wrap the entire JSON value in extra quotes in the settings page. GitHub gives a repository variable precedence over an organization variable with the same name. For normal PR, push and manual runs, an explicit caller `with:` input takes precedence over the resolved variable; an empty input falls back to the variable, then to the built-in default. This section describes the reusable workflow called from a plugin repository's `.github/workflows/ci.yml`; the [root action](#root-action-usage) is configured separately. Variables do not change the caller's `on:` triggers or `runs-on` directly.
 
-```text
-workflow input -> repository/organization action variable -> built-in fallback
+For example, set organization variable `MOODLE_PRODUCTS` to `["workplace"]` for Workplace-only automatic tests. A repository can override it with `["moodle"]`, and this caller overrides either variable:
+
+```yaml
+jobs:
+  ci:
+    uses: praxisdigital/moodle-test-action/.github/workflows/ci.yml@master
+    secrets: inherit
+    with:
+      products: '["moodle", "workplace"]'
+      db_types: '["mysqli", "pgsql"]'
 ```
 
-The legacy fallbacks remain Moodle 5.2, PHP 8.4, `moodle/moodle`, `ubuntu-latest`, MySQLi and non-experimental. `automatic: 'true'` ignores the legacy Moodle-ref, repository, runner, experimental and exclusion inputs/variables, including old org/repo PHP variables. It **still accepts an explicit `with: php_versions`** as an optional filter, plus `products: '["moodle"]'` or `products: '["workplace"]'` to run only one product. By default **both Moodle and Workplace run** on a `MOODLE_*` or `WORKPLACE_*` plugin branch. `db_types`, `dependencies`, Behat/PHPUnit controls and other service settings remain active. If the PHP filter excludes a non-experimental target, setup fails; excluded experimental targets are skipped with a warning.
+### Inputs with organization/repository variable fallbacks
+
+| Caller `with:` input | Actions variable | Applies to | Value and default when unset |
+| --- | --- | --- | --- |
+| `products` | `MOODLE_PRODUCTS` | Automatic only | JSON array of `["moodle"]` and/or `["workplace"]`; empty/unset selects **both**. An invalid or empty JSON array fails setup. |
+| `db_types` | `MOODLE_DB_TYPES` | Both modes | JSON array of `"mysqli"`, `"pgsql"`, and/or `"sqlsrv"`; default `["mysqli"]`. PHPUnit supports all three; Behat rows for `sqlsrv` are skipped. |
+| `dependencies` | `MOODLE_PLUGIN_DEPENDENCIES` | Both modes | JSON array of `"org/repo@ref"` strings (or whitespace-separated entries); default none. |
+| `php_versions` | `MOODLE_SUPPORTED_PHP_VERSIONS` | **Input:** both modes. **Variable:** legacy only. | JSON array such as `["8.3", "8.4"]`. Automatic mode uses **only an explicit input** as an optional filter on each catalogue target; without it, all supported PHP versions run. Legacy default `["8.4"]`. |
+| `moodle_versions` | `MOODLE_SUPPORTED_VERSIONS` | Legacy only | JSON refs, e.g. `["MOODLE_502_STABLE"]`; default `["MOODLE_502_STABLE"]`. |
+| `moodle_repositories` | `MOODLE_REPOS` | Legacy only | JSON `org/repo` array; default `["moodle/moodle"]`. |
+| `os` | `MOODLE_OS` | Legacy only | JSON runner-label array; default `["ubuntu-latest"]`. Automatic rows always use `ubuntu-latest`, regardless of this setting. |
+| `experimental` | `MOODLE_EXPERIMENTAL` | Legacy only | JSON boolean array; default `[false]`. Automatic targets use their catalogue flags. |
+| `exclude_matrix` | `MOODLE_EXCLUDE_MATRIX` | Legacy only | JSON array of row-matching objects; default `[]`. For example, `[{"dbtype":"pgsql","php":"8.4"}]`. |
+| `plugin_component` | `MOODLE_PLUGIN_COMPONENT` | PHPUnit only | Optional Moodle component override; normally detected from `version.php`. |
+| `plugin_path` | `MOODLE_PLUGIN_PATH` | PHPUnit only | Optional plugin install-path override; normally detected. |
+| `additional_phpunit_arguments` | `MOODLE_ADDITIONAL_PHPUNIT_ARGUMENTS` | PHPUnit only | Extra PHPUnit CLI arguments; default empty. |
+| `additional_behat_arguments` | `MOODLE_ADDITIONAL_BEHAT_ARGUMENTS` | Behat only | Extra Behat CLI arguments; default empty. |
+| `org` | `MOODLE_ORG` | GitHub App setup | App installation owner; defaults to the calling repository's owner. |
+
+The App ID can separately be set as `MOODLE_CI_APP_ID` in an Actions **secret or variable** (secret takes precedence). `MOODLE_CI_APP_PRIVATE_KEY` must be an Actions **secret**, not a variable. Use `secrets: inherit` in the caller; see [Private repositories](#private-repositories-github-app).
+
+### Inputs without variable fallbacks
+
+These are set under the caller job's `with:` (not by an organization/repository variable):
+
+| Input | Default / effect |
+| --- | --- |
+| `automatic` | `'true'` uses the central target catalogue; `'false'` enables the legacy Cartesian matrix and its one-off overrides. |
+| `run_phpunit` | `'true'`; PHPUnit runs on PR, push and manual-dispatch events. |
+| `run_behat` | `'true'`; Behat runs for `#behat` comments, manual dispatch and stable-branch pushes. Set `behat_on_pull_request: 'true'` to run it on ordinary PRs too. |
+| `behat_on_pull_request` | `'false'`; controls automatic Behat on PRs. |
+| `behat_increase_timeout` | `'2'` multiplier; `'0'` disables the increase. |
+| `behat_step_timeout_minutes` | `'45'` minute step limit. |
+| `post_no_tests_comment` | For `#behat`, defaults to `'true'`; otherwise `'false'`. |
+| `post_commands_comment` | `'true'`; posts command help when a PR is opened. |
+| `fail_on_empty_test_suite` | `'true'`; fail PHPUnit when no tests execute. |
+| `pull_request_number` | Empty; optional explicit PR for comment/manual workflows. |
+| `action_ref` | `'master'`; when calling a development ref of the reusable workflow, set this to the same ref so subactions and the resolver match. |
+
+All JSON-array examples above are **strings** under YAML `with:` (use single quotes around the JSON). The on/off inputs are strings too (`'true'` / `'false'`). Invalid `products` and automatic-mode PHP filters fail setup; some legacy matrix inputs fall back to defaults with a warning when malformed. Empty `products` means both only in automatic mode; legacy mode builds its matrix from Moodle refs/repositories instead.
+
+### Event-specific behavior
+
+- For a normal PR, push or `workflow_dispatch`, the caller's `with:` values override repository variables, which override organization variables. The caller controls its own event triggers: an unrestricted `push:` and `pull_request:` can start two runs for the same PR commit. Restrict `push.branches` as in the [recommended workflow](#recommended-workflow); a PR head branch matching that filter still starts both events. Concurrency cancels superseded PR runs, not push runs.
+- For a **same-repository `#behat` comment**, GitHub starts the workflow on the default branch, but setup reads the **PR merge commit's** `.github/workflows/ci.yml`. Its literal `with:` values for `automatic`, `products`, matrix filters, dependencies and Behat settings override repository/organization variables. Omitted values fall back to variables/defaults, **not** the default-branch caller's `with:`. Dynamic `${{ ... }}` expressions in the PR workflow's `with:` fail because they cannot be evaluated safely. The PR file must have exactly one matching reusable-workflow job; it cannot change `org` or `action_ref` relative to the default-branch caller. Fork PR `#behat` comments are rejected. Other settings such as `behat_on_pull_request`, PHPUnit options, and App setup are not reconfigured from the PR's `with:` on a comment run. `issue_comment` must be enabled in the plugin repository's default-branch workflow for this to work.
+
+With `automatic: 'false'`, the legacy fallbacks are Moodle 5.2, PHP 8.4, `moodle/moodle`, `ubuntu-latest`, MySQLi and non-experimental. With `automatic: 'true'`, the legacy Moodle-ref, repository, runner, experimental, exclusion and organization/repository PHP-version variables are ignored. If an explicit PHP filter excludes a non-experimental catalogue target, setup fails; excluded experimental targets are skipped with a warning.
 
 ## Automatic Moodle matrix
 
@@ -176,5 +230,3 @@ When calling the root or modular actions directly, mint the token in the caller 
 - PHPUnit supports `mysqli`, `pgsql`, and `sqlsrv`.
 - Behat supports `mysqli` and `pgsql`.
 - Dependencies use `org/repo@ref` format.
-- `issue_comment` workflows must exist on the plugin repository default branch before `#behat` comments can trigger them.
-- For `#behat` on a same-repository PR, the default-branch workflow receives the comment, but setup reads `.github/workflows/ci.yml` from the **PR merge commit**. Its reusable-workflow job's literal `with:` inputs (including `dependencies`, `db_types`, `automatic`, PHP/product filters and Behat settings) take precedence over repository/organization variables. Values omitted on the PR use repository/organization variables or reusable-workflow defaults, **not** stale default-branch `with:` inputs. The PR workflow must contain exactly one `praxisdigital/moodle-test-action/.github/workflows/ci.yml@...` job; dynamic `${{ ... }}` expressions in its `with:` values are not evaluated and fail with a diagnostic. `org` and `action_ref` cannot change relative to the default-branch caller during a comment run. Fork PR `#behat` runs are rejected because comment runs have private-repository credentials.

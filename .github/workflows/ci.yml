@@ -478,7 +478,7 @@ jobs:
         env:
           DB_TYPES: ${{ steps.config.outputs.db_types }}
           AUTOMATIC: ${{ steps.config.outputs.automatic }}
-          PRODUCTS: ${{ inputs.products }}
+          PRODUCTS: ${{ inputs.products || vars.MOODLE_PRODUCTS || '' }}
           PHP_VERSIONS: ${{ steps.config.outputs.php_versions }}
           MOODLE_VERSIONS: ${{ steps.config.outputs.moodle_versions }}
           MOODLE_REPOSITORIES: ${{ steps.config.outputs.moodle_repositories }}
@@ -499,6 +499,7 @@ jobs:
           VAR_MOODLE_VERSIONS: ${{ vars.MOODLE_SUPPORTED_VERSIONS || '' }}
           VAR_MOODLE_REPOSITORIES: ${{ vars.MOODLE_REPOS || '' }}
           VAR_PHP_VERSIONS: ${{ vars.MOODLE_SUPPORTED_PHP_VERSIONS || '' }}
+          VAR_PRODUCTS: ${{ vars.MOODLE_PRODUCTS || '' }}
           VAR_OS: ${{ vars.MOODLE_OS || '' }}
           VAR_EXPERIMENTAL: ${{ vars.MOODLE_EXPERIMENTAL || '' }}
           VAR_EXCLUDE_MATRIX: ${{ vars.MOODLE_EXCLUDE_MATRIX || '' }}
@@ -516,7 +517,7 @@ jobs:
               .resolvePrConfig(JSON.parse(process.env.PR_INPUTS), {
                 db_types: process.env.VAR_DB_TYPES, dependencies: process.env.VAR_DEPENDENCIES,
                 moodle_versions: process.env.VAR_MOODLE_VERSIONS, moodle_repositories: process.env.VAR_MOODLE_REPOSITORIES,
-                php_versions: process.env.VAR_PHP_VERSIONS, os: process.env.VAR_OS,
+                php_versions: process.env.VAR_PHP_VERSIONS, os: process.env.VAR_OS, products: process.env.VAR_PRODUCTS,
                 experimental: process.env.VAR_EXPERIMENTAL, exclude_matrix: process.env.VAR_EXCLUDE_MATRIX,
                 additional_behat_arguments: process.env.VAR_BEHAT_ARGUMENTS,
               }, process.env.DEFAULT_ORG) : null;

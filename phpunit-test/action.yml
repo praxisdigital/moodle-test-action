@@ -79,7 +79,7 @@ runs:
       if: ${{ inputs.dbtype == 'pgsql' }}
       uses: m4nu56/postgresql-action@v1
       with:
-        postgresql version: 16
+        postgresql version: ${{ inputs.moodle == 'MOODLE_503_STABLE' && '17' || '16' }}
         postgresql db: test
         postgresql user: test
         postgresql password: test

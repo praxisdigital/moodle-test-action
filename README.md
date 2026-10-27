@@ -139,6 +139,75 @@ Plugin component and install path are auto-detected from `$plugin->component` in
 
 When using the root action, `action_ref` defaults to the same ref as `uses: praxisdigital/moodle-test-action@...`. The reusable workflow's `action_ref` defaults to `master`; when calling a development ref of `.github/workflows/ci.yml`, pass that same development ref as `action_ref` so setup checks out the matching resolver and catalogue.
 
+## Code coverage
+
+PHPUnit runs enable Xdebug coverage and upload Clover XML, an exact executable-line
+JSON map, a text summary, and
+plugin-path metadata as a `coverage-*` artifact for each matrix target, including
+failed runs that produced reports. The reusable workflow automatically runs a
+final coverage job on pull requests, merges the matrix reports, and updates one
+PR comment with total and file-by-file coverage differences against the latest
+successful base-branch run with coverage artifacts.
+
+Fallback runs using Moodle's generated PHPUnit configuration replace its source
+filter with the plugin directory (excluding `tests` and `vendor`). Plugin-owned
+PHPUnit configurations retain explicit source filters and exclusions; configurations
+without an include filter receive plugin-scoped coverage automatically. Temporary
+configurations stay beside their originals to preserve relative paths. The summary also rejects
+files outside the plugin path and requires valid plugin-path metadata. Artifacts
+are published only when non-empty Clover and executable-line reports exist; baseline discovery
+skips older metadata-only artifacts and continues to the next successful run
+until a usable executable-line report is found. Baseline discovery and merging
+share metadata, path, and executable-line validation. Old Clover-only artifacts
+are skipped: run the base-branch workflow again after upgrading.
+
+Before launching tests, reusable workflow setup uploads a versioned
+`coverage-expected-targets` artifact containing `expected-targets.json`, derived
+from the resolved PHPUnit matrix including experimental targets. Its target
+identities use the same function as the report producer. Numeric comparisons
+require each run's reports to cover its independently recorded expected set,
+identical successfully parsed target sets, and no rejected reports on either side.
+Otherwise the PR comment reports **Coverage incomplete / not comparable** and
+lists missing/rejected targets, withholding deltas and file additions/removals.
+Failed test jobs still upload valid reports; failed jobs without a report cannot
+silently turn a partial matrix into a comparable diff.
+
+Standalone/root-action callers must also upload `coverage-expected-targets`
+before tests. Generate `expected-targets.json` with
+`coverage-summary/targets.js`'s `expectedTargets(rows)` using their resolved
+matrix rows (`suite: 'phpunit'`, `moodle`, `php`, `dbtype`, `os`,
+`moodle_repository`), rather than deriving expectations from received reports.
+Missing/invalid manifests withhold numeric comparisons. Baseline runs predating
+the manifest must be refreshed.
+
+Target identities include the normalized `experimental` flag, so legacy matrices
+containing both `false` and `true` remain distinct. Baseline selection uses the
+newest successful push with a complete expected matrix and no rejected reports,
+continuing to older runs when a newer candidate is incomplete. The mandatory
+manifest is downloaded independently of `artifact-prefix`, including when the
+report prefix is `coverage-target-`.
+
+The line map is generated locally from PHPUnit's raw coverage export, which is
+deleted before upload. It preserves executable method-start lines that Clover
+represents as methods, without counting non-executable method declarations.
+
+Keep the caller workflow enabled for pushes to PR base branches as shown above
+so baseline artifacts are available. The caller needs `actions: read` and
+`issues: write` and `pull-requests: write` in addition to the normal CI permissions. If no baseline exists,
+the comment explains why a diff is unavailable. When testing a development ref,
+set `action_ref` to the same ref as the reusable workflow.
+
+Users of the root compatibility action must add a final job themselves:
+
+```yaml
+  coverage:
+    needs: PHPUnit
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: praxisdigital/moodle-test-action/coverage-summary@master
+```
+
 ## Behat
 
 Behat runs when:

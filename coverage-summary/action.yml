@@ -164,7 +164,7 @@ runs:
             }
 
             if (rows.length > shown.length) {
-              lines.push(`| ... | ... | ... | ${rows.length - shown.length} more files omitted |`);
+              lines.push('', `Showing ${shown.length} of ${rows.length} files to keep this comment manageable. The remaining ${rows.length - shown.length} file rows are not displayed; all files are included in the overall coverage totals above.`);
             }
 
             return lines.join('\n');
@@ -192,7 +192,9 @@ runs:
             for (const [name, file] of files.slice(0, 100)) {
               lines.push(`| \`${name}\` | ${fmt(file.percent)} | ${file.covered}/${file.total} |`);
             }
-            if (files.length > 100) lines.push(`| ... | ... | ${files.length - 100} more files omitted |`);
+            if (files.length > 100) {
+              lines.push('', `Showing 100 of ${files.length} files to keep this comment manageable. The remaining ${files.length - 100} file rows are not displayed; all files are included in the overall coverage totals above.`);
+            }
             return lines.join('\n');
           }
 

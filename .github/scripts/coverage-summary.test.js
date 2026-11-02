@@ -135,6 +135,33 @@ test('producer skips artifacts with missing or empty exact line reports', () => 
   } finally { fs.rmSync(dir, {recursive: true, force: true}); }
 });
 
+test('large current and diff reports explain the display limit while counting all files', async () => {
+  for (const baseline of [false, true]) {
+    const dir = scratch();
+    let body;
+    try {
+      const files = Object.fromEntries(Array.from({length: 160}, (_, index) => [
+        `/runner/moodle/local/mxsdk/classes/file${String(index).padStart(3, '0')}.php`, {1: index < 100},
+      ]));
+      const lines = JSON.stringify({version: 1, files});
+      for (const side of baseline ? ['pr', 'base'] : ['pr']) {
+        const root = path.join(dir, 'coverage-summary', side);
+        artifact(path.join(root, targetA), lines);
+        manifest(root, [targetA]);
+      }
+      await vm.runInNewContext(`(async () => {${action.runs.steps.find(s => s.name === 'Commenting combined PR coverage diff').with.script}\n})()`, {
+        require, process: {env: {GITHUB_WORKSPACE: dir, REPORTS_MODULE: path.resolve('coverage-summary/reports.js'), BASE_ARTIFACTS_FOUND: String(baseline)}},
+        context: {repo: {owner: 'test', repo: 'plugin'}, payload: {pull_request: {number: 4}}}, core: {warning: assert.fail},
+        github: {paginate: async () => [], rest: {issues: {listComments: () => {}, createComment: async value => { body = value.body; }}}},
+      });
+      assert.match(body, /Showing 100 of 160 files to keep this comment manageable/);
+      assert.match(body, /remaining 60 file rows are not displayed; all files are included in the overall coverage totals above/);
+      assert.match(body, /62\.50% \(100\/160/);
+      assert.equal((body.match(/^\| `classes\//gm) || []).length, 100);
+    } finally { fs.rmSync(dir, {recursive: true, force: true}); }
+  }
+});
+
 test('baseline timeout posts complete current coverage with run link but no deltas', async () => {
   const dir = scratch();
   let body;

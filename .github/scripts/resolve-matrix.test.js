@@ -6,12 +6,13 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const {
-  branchNumber, releaseBranch, phpRange, validateCatalogue, readMetadata, selectTargets, selectRequiredTargets, buildRows,
+  branchNumber, releaseBranch, phpRange, validateImageConfig, validateCatalogue, readMetadata, selectTargets, selectRequiredTargets, buildRows,
   legacyRows,
   resolve,
 } = require('./resolve-matrix');
 
 const catalogue = validateCatalogue(JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'moodle-test-targets.json'), 'utf8')));
+const imageConfig = validateImageConfig(JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'default-image-version.json'), 'utf8')));
 const requires = readMetadata('<?php $plugin->requires = 2022112800;');
 const releases = targets => targets.map(target => target.release);
 const coreBuilds = { '4.0': 2022041900, '4.1': 2022112800, '4.2': 2023042400,
@@ -110,26 +111,29 @@ test('Moodle 5.3 is required but its matrix rows are experimental', () => {
   assert.ok(rows.filter(row => row.moodle === 'MOODLE_502_STABLE').every(row => row.experimental === false));
 });
 
-test('database rows use MySQL versions and SQL Server runners compatible with their PHP and Moodle releases', () => {
-  const targets = catalogue.filter(target => target.product === 'moodle' && ['4.0', '4.1', '4.5', '5.0'].includes(target.release));
+test('database images use PHP overrides, target overrides, and defaults for both suites and products', () => {
+  const targets = catalogue.filter(target => ['4.0', '4.1', '5.0', '5.3'].includes(target.release));
   const versions = Object.fromEntries(targets.map(target => [`${target.repository}@${target.ref}`, coreBuilds[target.release]]));
   const rows = buildRows(targets, ['mysqli', 'pgsql', 'sqlsrv'], ['phpunit', 'behat'], '', versions);
-  const find = (release, php, dbtype, suite = 'phpunit') => rows.find(row =>
-    row.moodle === `MOODLE_${release}_STABLE` && row.php === php && row.dbtype === dbtype && row.suite === suite);
+  const find = (ref, php, dbtype, suite = 'phpunit') => rows.find(row =>
+    row.moodle === ref && row.php === php && row.dbtype === dbtype && row.suite === suite);
 
-  assert.equal(find('400', '7.3', 'mysqli').mysql_version, '5.7');
-  assert.equal(find('400', '7.3', 'mysqli', 'behat').mysql_version, '5.7');
-  assert.equal(find('401', '7.4', 'mysqli').mysql_version, '8.0');
-  assert.equal(find('405', '8.3', 'mysqli').mysql_version, '8.0');
-  assert.equal(find('500', '8.2', 'mysqli').mysql_version, '8.4');
-  assert.equal(find('500', '8.2', 'mysqli', 'behat').mysql_version, '8.4');
-  assert.equal(find('400', '7.3', 'sqlsrv'), undefined);
-  assert.equal(find('400', '7.3', 'pgsql').os, 'ubuntu-latest');
-  assert.equal(find('401', '7.4', 'sqlsrv').os, 'ubuntu-22.04');
-  assert.equal(find('401', '8.1', 'sqlsrv').os, 'ubuntu-22.04');
-  assert.equal(find('500', '8.2', 'sqlsrv').os, 'ubuntu-22.04');
-  assert.equal(find('405', '8.3', 'sqlsrv').os, 'ubuntu-latest');
-  assert.ok(rows.filter(row => row.suite === 'behat').every(row => row.dbtype !== 'sqlsrv'));
+  for (const prefix of ['MOODLE_400_STABLE', 'WORKPLACE_400_LATEST']) {
+    assert.equal(find(prefix, '7.3', 'mysqli').image_version, '5.7');
+    assert.equal(find(prefix, '7.3', 'mysqli', 'behat').image_version, '5.7');
+  }
+  assert.equal(find('MOODLE_401_STABLE', '7.4', 'mysqli').image_version, '8.0');
+  assert.equal(find('WORKPLACE_401_LATEST', '7.4', 'mysqli').image_version, '8.0');
+  assert.equal(find('MOODLE_401_STABLE', '8.1', 'mysqli').image_version, '8.4');
+  assert.equal(find('MOODLE_500_STABLE', '8.2', 'mysqli').image_version, '8.4');
+  assert.equal(find('MOODLE_503_STABLE', '8.3', 'pgsql').image_version, '17');
+  assert.equal(find('MOODLE_503_STABLE', '8.3', 'pgsql', 'behat').image_version, '17');
+  assert.equal(find('MOODLE_500_STABLE', '8.3', 'pgsql').image_version, '16');
+  assert.equal(find('MOODLE_400_STABLE', '7.3', 'sqlsrv').image_version, '2022');
+  assert.equal(find('MOODLE_400_STABLE', '7.3', 'sqlsrv').os, 'ubuntu-latest');
+
+  const overridden = { ...targets[0], image_versions: { mysqli: '8.1' } };
+  assert.equal(buildRows([overridden], ['mysqli'], ['phpunit'], '', versions, ['7.3'], imageConfig)[0].image_version, '8.1');
 });
 
 test('workplace ref and PHP range remain coupled', () => {
@@ -215,6 +219,9 @@ test('invalid catalogue entries and incompatible ranges fail rather than falling
   assert.throws(() => validateCatalogue({ targets: [catalogue[0], catalogue[0]] }), /Duplicate/);
   assert.throws(() => validateCatalogue({ targets: [{ ...catalogue[0], required: 'false' }] }), /Invalid target/);
   assert.throws(() => validateCatalogue({ targets: [{ ...catalogue[0], experimental: 'true' }] }), /Invalid target/);
+  assert.throws(() => validateCatalogue({ targets: [{ ...catalogue[0], image_versions: { mysqli: 8 } }] }), /Invalid image versions/);
+  assert.throws(() => validateImageConfig({ ...imageConfig, defaults: { mysqli: '8.4' } }), /Missing default database image/);
+  assert.throws(() => validateImageConfig({ ...imageConfig, php_overrides: { '7.4': { other: '8.0' } } }), /Invalid image versions/);
   assert.throws(() => validateCatalogue({ targets: [catalogue[0], { ...catalogue[0], product: 'workplace', required: true }] }), /Conflicting required/);
   assert.throws(() => readMetadata('<?php $plugin->version = 1;'), /requires/);
   assert.throws(() => readMetadata('<?php $plugin->requires = 1; $plugin->supported = get_versions();'), /supported/);

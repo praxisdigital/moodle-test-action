@@ -1,0 +1,7 @@
+{
+  "defaults": { "mysqli": "8.4", "pgsql": "16", "sqlsrv": "2022" },
+  "php_overrides": {
+    "7.3": { "mysqli": "5.7" },
+    "7.4": { "mysqli": "8.0" }
+  }
+}

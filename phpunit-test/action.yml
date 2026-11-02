@@ -44,10 +44,10 @@ inputs:
     description: 'Database type (mysqli, pgsql, sqlsrv)'
     required: false
     default: 'mysqli'
-  mysql_version:
-    description: 'MySQL Docker image version'
+  image_version:
+    description: 'Database server image version selected by the reusable workflow'
     required: false
-    default: '8.4'
+    default: ''
   experimental:
     description: 'Is experimental run'
     required: false
@@ -73,7 +73,7 @@ runs:
       uses: praxisdigital/mysql-action@tmpfs-and-docker-patch
       with:
         collation server: utf8mb4_danish_ci
-        mysql version: ${{ inputs.mysql_version || '8.4' }}
+        mysql version: ${{ inputs.image_version || '8' }}
         mysql database: test
         mysql user: test
         mysql password: test
@@ -83,7 +83,7 @@ runs:
       if: ${{ inputs.dbtype == 'pgsql' }}
       uses: m4nu56/postgresql-action@v1
       with:
-        postgresql version: ${{ inputs.moodle == 'MOODLE_503_STABLE' && '17' || '16' }}
+        postgresql version: ${{ inputs.image_version || (inputs.moodle == 'MOODLE_503_STABLE' && '17' || '16') }}
         postgresql db: test
         postgresql user: test
         postgresql password: test
@@ -92,7 +92,7 @@ runs:
       if: ${{ inputs.dbtype == 'sqlsrv' }}
       uses: praxisdigital/setup-mssql-server@main
       with:
-        version: 2022
+        version: ${{ inputs.image_version || '2022' }}
         user: test
         password: test
         database: test
@@ -103,11 +103,7 @@ runs:
         php-version: ${{ inputs.php }}
         coverage: xdebug
         ini-values: 'max_input_vars=5000'
-        extensions: >-
-          ${{ inputs.dbtype == 'sqlsrv' &&
-            ((inputs.php == '7.4' || inputs.php == '8.0') && 'sqlsrv-5.10.0, pdo_sqlsrv-5.10.0' ||
-            (inputs.php == '8.1' || inputs.php == '8.2') && 'sqlsrv-5.12.0, pdo_sqlsrv-5.12.0' ||
-            'sqlsrv, pdo_sqlsrv') || '' }}
+        extensions: sqlsrv, pdo_sqlsrv
 
     - name: Download & Setup MSSQL ODBC driver for PHP
       if: ${{ inputs.dbtype == 'sqlsrv' }}

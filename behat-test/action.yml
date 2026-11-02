@@ -14,10 +14,10 @@ inputs:
     description: 'Database type (mysqli or pgsql)'
     required: false
     default: 'mysqli'
-  mysql_version:
-    description: 'MySQL Docker image version'
+  image_version:
+    description: 'Database server image version selected by the reusable workflow'
     required: false
-    default: '8.4'
+    default: ''
   moodle_repository:
     description: 'Moodle repository, e.g. moodle/moodle'
     required: false
@@ -214,7 +214,7 @@ runs:
       uses: praxisdigital/mysql-action@tmpfs-and-docker-patch
       with:
         collation server: utf8mb4_unicode_ci
-        mysql version: ${{ inputs.mysql_version || '8.4' }}
+        mysql version: ${{ inputs.image_version || '8' }}
         mysql database: test
         mysql user: test
         mysql password: test
@@ -224,7 +224,7 @@ runs:
       if: ${{ steps.detect.outputs.has_behat == 'true' && inputs.dbtype == 'pgsql' }}
       uses: m4nu56/postgresql-action@v1
       with:
-        postgresql version: ${{ inputs.moodle == 'MOODLE_503_STABLE' && '17' || '16' }}
+        postgresql version: ${{ inputs.image_version || (inputs.moodle == 'MOODLE_503_STABLE' && '17' || '16') }}
         postgresql db: test
         postgresql user: test
         postgresql password: test

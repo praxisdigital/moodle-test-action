@@ -2,6 +2,30 @@
 
 const fs = require('node:fs');
 
+const dbTypes = ['mysqli', 'pgsql', 'sqlsrv'];
+const validateImageVersions = (versions, label) => {
+  if (!versions || typeof versions !== 'object' || Array.isArray(versions) ||
+      !Object.keys(versions).length || Object.entries(versions).some(([db, version]) =>
+        !dbTypes.includes(db) || typeof version !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(version))) {
+    throw new Error(`Invalid image versions for ${label}`);
+  }
+  return versions;
+};
+
+const validateImageConfig = config => {
+  if (!config || !config.defaults || (config.php_overrides !== undefined &&
+      (!config.php_overrides || typeof config.php_overrides !== 'object' || Array.isArray(config.php_overrides)))) {
+    throw new Error('Invalid default image version configuration');
+  }
+  validateImageVersions(config.defaults, 'defaults');
+  if (dbTypes.some(db => !config.defaults[db])) throw new Error('Missing default database image version');
+  for (const [php, versions] of Object.entries(config.php_overrides || {})) {
+    phpNumber(php);
+    validateImageVersions(versions, `PHP ${php}`);
+  }
+  return config;
+};
+
 const releaseNumber = value => {
   const match = String(value).match(/^(\d+)\.(\d+)$/);
   if (!match) throw new Error(`Invalid Moodle release: ${value}`);
@@ -29,6 +53,8 @@ const phpNumber = value => {
   const [major, minor] = value.split('.').map(Number);
   return major * 100 + minor;
 };
+
+const defaultImageConfig = validateImageConfig(require('../default-image-version.json'));
 
 const phpRange = (minimum, maximum) => {
   if (phpNumber(minimum) > phpNumber(maximum)) throw new Error(`PHP minimum ${minimum} exceeds maximum ${maximum}`);
@@ -62,6 +88,7 @@ const validateCatalogue = data => {
         (target.version_file && !['version.php', 'public/version.php'].includes(target.version_file))) {
       throw new Error(`Invalid target for release ${target.release}`);
     }
+    if (target.image_versions !== undefined) validateImageVersions(target.image_versions, `${target.product} ${target.release}`);
     const key = `${target.product}:${release}`;
     if (keys.has(key)) throw new Error(`Duplicate catalogue target: ${key}`);
     keys.add(key);
@@ -133,7 +160,7 @@ const selectRequiredTargets = (targets, coreVersions, requires) => {
   });
 };
 
-const buildRows = (targets, dbTypes, suites, dependencies, coreVersions, phpVersions = []) => {
+const buildRows = (targets, databases, suites, dependencies, coreVersions, phpVersions = [], imageConfig = defaultImageConfig) => {
   if (phpVersions.some(php => typeof php !== 'string' || !/^\d+\.\d+$/.test(php))) {
     throw new Error('PHP version filter must contain strings such as "8.4"');
   }
@@ -146,14 +173,12 @@ const buildRows = (targets, dbTypes, suites, dependencies, coreVersions, phpVers
       if (target.experimental) continue;
       throw new Error(`No requested PHP version supports ${target.repository}@${target.ref} (allowed: ${target.php_min}–${target.php_max})`);
     }
-    for (const suite of suites) for (const php of phpForTarget) for (const dbtype of dbTypes) {
+    for (const suite of suites) for (const php of phpForTarget) for (const dbtype of databases) {
       if (suite === 'behat' && !['mysqli', 'pgsql'].includes(dbtype)) continue;
-      // No Microsoft PHP driver supports both PHP 7.3 and SQL Server 2022.
-      if (dbtype === 'sqlsrv' && php === '7.3') continue;
+      const image_version = target.image_versions?.[dbtype] || imageConfig.php_overrides?.[php]?.[dbtype] || imageConfig.defaults[dbtype];
+      if (!image_version) throw new Error(`No image version configured for ${dbtype}`);
       rows.push({ suite, php, moodle: target.ref, moodle_repository: target.repository,
-        os: dbtype === 'sqlsrv' && phpNumber(php) < 803 ? 'ubuntu-22.04' : 'ubuntu-latest', dbtype,
-        mysql_version: php === '7.3' ? '5.7' : target.number < 500 ? '8.0' : '8.4',
-        experimental: target.experimental === true, dependencies });
+        os: 'ubuntu-latest', dbtype, image_version, experimental: target.experimental === true, dependencies });
     }
   }
   if (rows.length > 256) throw new Error(`Matrix has ${rows.length} rows (GitHub limit: 256); narrow the catalogue or database choices`);
@@ -240,4 +265,4 @@ const resolve = async ({ github, appToken, context, branch, dbTypes, suites, dep
     description: selected.map(t => `${t.product} ${t.release}: ${t.repository}@${t.ref} (PHP ${phpVersions.length ? phpVersions.filter(php => t.php.includes(php)).join(', ') : `${t.php_min}–${t.php_max}`})`).join('\n') };
 };
 
-module.exports = { releaseNumber, branchNumber, releaseBranch, phpRange, validateCatalogue, readMetadata, selectTargets, selectRequiredTargets, buildRows, legacyRows, resolve };
+module.exports = { releaseNumber, branchNumber, releaseBranch, phpRange, validateImageConfig, validateCatalogue, readMetadata, selectTargets, selectRequiredTargets, buildRows, legacyRows, resolve };

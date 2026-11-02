@@ -5,6 +5,22 @@ const assert = require('node:assert/strict');
 const { parsePrWorkflow, resolvePrConfig } = require('./pr-workflow-config');
 const { legacyRows } = require('./resolve-matrix');
 
+test('repository product variable is respected and explicit PR input overrides it', () => {
+  assert.equal(resolvePrConfig({}, {products: '["moodle"]'}).products, '["moodle"]');
+  assert.equal(resolvePrConfig({products: '["workplace"]'}, {products: '["moodle"]'}).products, '["workplace"]');
+  assert.equal(resolvePrConfig({}).products, '');
+});
+
+test('normal CI and comment CI wire the repository product variable', () => {
+  const fs = require('node:fs');
+  const YAML = require('yaml');
+  const workflow = YAML.parse(fs.readFileSync('.github/workflows/ci.yml', 'utf8'));
+  const step = workflow.jobs.setup.steps.find(step => step.id === 'matrix');
+  assert.equal(step.env.PRODUCTS, "${{ inputs.products || vars.MOODLE_PRODUCTS || '' }}");
+  assert.equal(step.env.VAR_PRODUCTS, "${{ vars.MOODLE_PRODUCTS || '' }}");
+  assert.match(step.with.script, /products: process\.env\.VAR_PRODUCTS/);
+});
+
 const caller = withBlock => `name: Moodle CI
 on: [pull_request, issue_comment]
 jobs:

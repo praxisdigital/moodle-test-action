@@ -125,6 +125,19 @@ With `automatic: 'false'`, the legacy fallbacks are Moodle 5.2, PHP 8.4, `moodle
 
 ## Automatic Moodle matrix
 
+To run Moodle only without changing the minimal caller workflow, create a
+repository **Actions variable** (not a secret) named `MOODLE_PRODUCTS` with the
+value `["moodle"]` under **Settings → Secrets and variables → Actions → Variables**:
+
+```sh
+gh variable set MOODLE_PRODUCTS --body '["moodle"]' --repo OWNER/REPO
+```
+
+In automatic mode, product selection uses `with: products` first, then
+`vars.MOODLE_PRODUCTS`, then both Moodle and Workplace. This applies to normal
+runs and on-demand `#behat` runs. Use `["workplace"]` for Workplace only, or
+`["moodle", "workplace"]` for both. Legacy mode keeps its explicit repository matrix.
+
 The central [JSON catalogue](.github/moodle-test-targets.json) defines available test targets. Moodle has 4.0–4.5 and 5.0–5.3; Workplace has 4.0–4.1, 4.3–4.5 and 5.0–5.2, using `WORKPLACE_*_LATEST` rather than numbered or rolling refs. Each entry couples a release, product, exact core repository/ref, `required` flag and inclusive `php_min`/`php_max` versions. All PHP minor versions between those bounds are tested; for example `8.2`–`8.4` generates 8.2, 8.3 and 8.4. Set `version_file: "public/version.php"` for core branches using Moodle's new `public/` layout (otherwise the root file is used). Set `experimental: true` to make test failures non-blocking and skip a target with a warning when its core version cannot be read or its PHP range does not match the filter. The private Workplace fork's PHP support, refs and version-file paths still need verification with App access.
 
 For a PR, setup reads `version.php` from the PR **merge ref** and uses the PR's base branch; for a push it uses that commit and branch. Plugin release branches partition **both products'** catalogues by version: `MOODLE_41_STABLE` owns releases from 4.1 up to (but not including) the next release branch in that plugin repository. The branch prefix is not a product restriction. `41`/`401` and `50`/`500` normalize to the same releases. Workplace `*_LATEST` branches are also recognized. The first branch-name segment must be at least four characters, so issue branches beginning `mma_`, `tk_`, or `abc_` do not create release boundaries. PRs into **any** branch still run. Both products require a readable core ref, so private Workplace tests need GitHub App access even when the plugin branch starts `MOODLE_`.

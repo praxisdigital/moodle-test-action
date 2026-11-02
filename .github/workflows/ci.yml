@@ -9,7 +9,7 @@ on:
         type: string
         default: 'true'
       products:
-        description: 'Optional JSON array of products to test in automatic mode: moodle and/or workplace (defaults to both)'
+        description: 'Optional JSON array of products to test in automatic mode: moodle and/or workplace (input overrides MOODLE_PRODUCTS variable; defaults to both)'
         required: false
         type: string
         default: ''

@@ -160,7 +160,7 @@ plugin-path metadata as a `coverage-*` artifact for each matrix target, includin
 failed runs that produced reports. The reusable workflow automatically runs a
 final coverage job on pull requests, merges the matrix reports, and updates one
 PR comment with total and file-by-file coverage differences against the latest
-successful base-branch run with coverage artifacts.
+successful base-branch run with complete coverage and the same expected targets.
 
 Fallback runs using Moodle's generated PHPUnit configuration replace its source
 filter with the plugin directory (excluding `tests` and `vendor`). Plugin-owned
@@ -195,10 +195,25 @@ the manifest must be refreshed.
 
 Target identities include the normalized `experimental` flag, so legacy matrices
 containing both `false` and `true` remain distinct. Baseline selection uses the
-newest successful push with a complete expected matrix and no rejected reports,
-continuing to older runs when a newer candidate is incomplete. The mandatory
+newest successful push with a complete expected matrix matching the PR and no
+rejected reports, continuing to older runs when a newer candidate is incomplete
+or incompatible. The mandatory
 manifest is downloaded independently of `artifact-prefix`, including when the
 report prefix is `coverage-target-`.
+
+If no matching complete baseline exists but a base-branch push is queued or
+running, the summary polls every 30 seconds for up to 15 minutes, then selects
+the completed matching baseline automatically. A run whose setup has not yet
+published its manifest is also allowed time to finish. A known different matrix
+does not cause a wait. Existing matching complete baselines are used immediately.
+No caller changes or additional permissions/triggers are needed.
+
+Configure the limit with reusable workflow input `coverage_baseline_wait_minutes`
+(or summary action input `baseline-wait-minutes`), from `0` to `60`; `0` disables
+waiting. Timeout posts **Coverage comparison pending** with a base-run link;
+failed/absent baselines produce an explicit unavailable message without numeric
+deltas. A timeout does not arrange a later automatic refresh: rerun the summary
+after the linked run succeeds. Initial setup still requires a base-branch run.
 
 The line map is generated locally from PHPUnit's raw coverage export, which is
 deleted before upload. It preserves executable method-start lines that Clover

@@ -18,6 +18,11 @@ on:
         required: false
         type: string
         default: 'true'
+      coverage_baseline_wait_minutes:
+        description: 'Maximum minutes to wait for matching in-progress base coverage (0 disables waiting; maximum 60)'
+        required: false
+        type: string
+        default: '15'
       run_behat:
         description: 'Run Behat tests when feature files are present'
         required: false
@@ -853,3 +858,5 @@ jobs:
 
       - name: Combine coverage and comment PR diff
         uses: ./.moodle-test-action/coverage-summary
+        with:
+          baseline-wait-minutes: ${{ inputs.coverage_baseline_wait_minutes }}

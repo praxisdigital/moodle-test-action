@@ -76,14 +76,15 @@ test('baseline discovery skips missing/invalid metadata, empty and out-of-plugin
     }
     fs.writeFileSync(path.join(dir, 'expected-targets.json'), JSON.stringify({version: 1, targets: [targetA]}));
     execFileSync('zip', ['-q', path.join(dir, 'manifest.zip'), 'expected-targets.json'], {cwd: dir});
+    manifest(path.join(dir, 'coverage-summary/pr'), [targetA]);
     await vm.runInNewContext(`(async () => {${action.runs.steps.find(s => s.name === 'Finding base branch coverage run').with.script}\n})()`, {
       Buffer,
       require: name => name === 'fs' ? {...fs, appendFileSync: (file, value) => { selected += value; }} : require(name),
-      process: {env: {REPORTS_MODULE: path.resolve('coverage-summary/reports.js'), ARTIFACT_PREFIX: 'coverage-', GITHUB_ENV: '/env'}},
+      process: {env: {GITHUB_WORKSPACE: dir, BASELINE_MODULE: path.resolve('coverage-summary/baseline.js'), BASELINE_WAIT_MINUTES: '0', REPORTS_MODULE: path.resolve('coverage-summary/reports.js'), ARTIFACT_PREFIX: 'coverage-', GITHUB_ENV: '/env'}},
       context: {repo: {owner: 'test', repo: 'plugin'}, payload: {pull_request: {base: {ref: 'main'}}}},
       core: {notice: () => {}, warning: () => {}},
       github: {
-        paginate: async (method, params) => method === 'runs' ? candidates.map((_, id) => ({id}))
+        paginate: async (method, params) => method === 'runs' ? candidates.map((_, id) => ({id, status: 'completed', conclusion: 'success'}))
           : [{id: 'manifest', name: 'coverage-expected-targets', expired: false}, {id: params.run_id, name: targetA, expired: false}],
         rest: {actions: {
           getWorkflowRun: async () => ({data: {workflow_id: 7}}),
@@ -131,6 +132,24 @@ test('producer skips artifacts with missing or empty exact line reports', () => 
       execFileSync('bash', ['-e', '-c', script], {env: {...process.env, GITHUB_WORKSPACE: dir, GITHUB_ENV: path.join(dir, 'env')}});
       assert.equal(fs.existsSync(path.join(dir, 'coverage/metadata.json')), false);
     }
+  } finally { fs.rmSync(dir, {recursive: true, force: true}); }
+});
+
+test('baseline timeout explanation is posted without numeric matrix-error output', async () => {
+  const dir = scratch();
+  let body;
+  try {
+    artifact(path.join(dir, 'coverage-summary/pr', targetA), report({1: true}));
+    await vm.runInNewContext(`(async () => {${action.runs.steps.find(s => s.name === 'Commenting combined PR coverage diff').with.script}\n})()`, {
+      require, process: {env: {GITHUB_WORKSPACE: dir, REPORTS_MODULE: path.resolve('coverage-summary/reports.js'),
+        BASE_ARTIFACTS_FOUND: 'false', BASE_COVERAGE_REASON: 'Coverage comparison pending: base run https://github.com/test/plugin/actions/runs/2'}},
+      context: {repo: {owner: 'test', repo: 'plugin'}, payload: {pull_request: {number: 4}}},
+      core: {warning: assert.fail},
+      github: {paginate: async () => [], rest: {issues: {listComments: () => {}, createComment: async value => { body = value.body; }}}},
+    });
+    assert.match(body, /Coverage comparison pending/);
+    assert.match(body, /actions\/runs\/2/);
+    assert.doesNotMatch(body, /not comparable|\| Statements \||\d+\.\d+%/);
   } finally { fs.rmSync(dir, {recursive: true, force: true}); }
 });
 
@@ -259,12 +278,13 @@ test('baseline search skips newest incomplete experimental matrix for older comp
       for (const [name, content] of Object.entries(files)) fs.writeFileSync(path.join(folder, name), content);
       execFileSync('zip', ['-q', path.join(dir, `${id}.zip`), ...Object.keys(files)], {cwd: folder});
     });
+    manifest(path.join(dir, 'coverage-summary/pr'), [targetA, targetB]);
     await vm.runInNewContext(`(async () => {${action.runs.steps.find(s => s.name === 'Finding base branch coverage run').with.script}\n})()`, {
       Buffer, require: name => name === 'fs' ? {...fs, appendFileSync: (file, value) => { selected += value; }} : require(name),
-      process: {env: {REPORTS_MODULE: path.resolve('coverage-summary/reports.js'), ARTIFACT_PREFIX: 'coverage-target-', GITHUB_ENV: '/env'}},
+      process: {env: {GITHUB_WORKSPACE: dir, BASELINE_MODULE: path.resolve('coverage-summary/baseline.js'), BASELINE_WAIT_MINUTES: '0', REPORTS_MODULE: path.resolve('coverage-summary/reports.js'), ARTIFACT_PREFIX: 'coverage-target-', GITHUB_ENV: '/env'}},
       context: {repo: {owner: 'test', repo: 'plugin'}, payload: {pull_request: {base: {ref: 'main'}}}},
       core: {notice: () => {}, warning: assert.fail},
-      github: {paginate: async (method, params) => method === 'runs' ? [{id: 2}, {id: 1}]
+      github: {paginate: async (method, params) => method === 'runs' ? [{id: 2, status: 'completed', conclusion: 'success'}, {id: 1, status: 'completed', conclusion: 'success'}]
         : [{id: 0, name: 'coverage-expected-targets'}, {id: 1, name: targetA}, ...(params.run_id === 1 ? [{id: 1, name: targetB}] : [])],
         rest: {actions: {getWorkflowRun: async () => ({data: {workflow_id: 7}}), listWorkflowRuns: 'runs', listWorkflowRunArtifacts: 'artifacts',
           downloadArtifact: async ({artifact_id}) => ({data: fs.readFileSync(path.join(dir, `${artifact_id}.zip`))}),

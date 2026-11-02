@@ -3,8 +3,9 @@
 const fs = require('node:fs');
 
 const dbTypes = ['mysqli', 'pgsql', 'sqlsrv'];
+const isRecord = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const validateImageVersions = (versions, label) => {
-  if (!versions || typeof versions !== 'object' || Array.isArray(versions) ||
+  if (!isRecord(versions) ||
       !Object.keys(versions).length || Object.entries(versions).some(([db, version]) =>
         !dbTypes.includes(db) || typeof version !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(version))) {
     throw new Error(`Invalid image versions for ${label}`);
@@ -13,15 +14,27 @@ const validateImageVersions = (versions, label) => {
 };
 
 const validateImageConfig = config => {
-  if (!config || !config.defaults || (config.php_overrides !== undefined &&
-      (!config.php_overrides || typeof config.php_overrides !== 'object' || Array.isArray(config.php_overrides)))) {
+  if (!isRecord(config) || (config.overrides !== undefined && !isRecord(config.overrides))) {
     throw new Error('Invalid default image version configuration');
   }
   validateImageVersions(config.defaults, 'defaults');
   if (dbTypes.some(db => !config.defaults[db])) throw new Error('Missing default database image version');
-  for (const [php, versions] of Object.entries(config.php_overrides || {})) {
+  const overrides = config.overrides || {};
+  if (Object.keys(overrides).some(key => !['php', 'product'].includes(key)) ||
+      (overrides.php !== undefined && !isRecord(overrides.php)) ||
+      (overrides.product !== undefined && !isRecord(overrides.product))) {
+    throw new Error('Invalid image overrides');
+  }
+  for (const [php, versions] of Object.entries(overrides.php || {})) {
     phpNumber(php);
     validateImageVersions(versions, `PHP ${php}`);
+  }
+  for (const [product, releases] of Object.entries(overrides.product || {})) {
+    if (!['moodle', 'workplace'].includes(product) || !isRecord(releases)) throw new Error(`Invalid image overrides for ${product}`);
+    for (const [release, versions] of Object.entries(releases)) {
+      releaseNumber(release);
+      validateImageVersions(versions, `${product} ${release}`);
+    }
   }
   return config;
 };
@@ -88,7 +101,7 @@ const validateCatalogue = data => {
         (target.version_file && !['version.php', 'public/version.php'].includes(target.version_file))) {
       throw new Error(`Invalid target for release ${target.release}`);
     }
-    if (target.image_versions !== undefined) validateImageVersions(target.image_versions, `${target.product} ${target.release}`);
+    if (target.image_versions !== undefined) throw new Error(`Move image versions for ${target.product} ${target.release} to default-image-version.json`);
     const key = `${target.product}:${release}`;
     if (keys.has(key)) throw new Error(`Duplicate catalogue target: ${key}`);
     keys.add(key);
@@ -175,7 +188,8 @@ const buildRows = (targets, databases, suites, dependencies, coreVersions, phpVe
     }
     for (const suite of suites) for (const php of phpForTarget) for (const dbtype of databases) {
       if (suite === 'behat' && !['mysqli', 'pgsql'].includes(dbtype)) continue;
-      const image_version = target.image_versions?.[dbtype] || imageConfig.php_overrides?.[php]?.[dbtype] || imageConfig.defaults[dbtype];
+      const image_version = imageConfig.overrides?.product?.[target.product]?.[target.release]?.[dbtype] ||
+        imageConfig.overrides?.php?.[php]?.[dbtype] || imageConfig.defaults[dbtype];
       if (!image_version) throw new Error(`No image version configured for ${dbtype}`);
       rows.push({ suite, php, moodle: target.ref, moodle_repository: target.repository,
         os: 'ubuntu-latest', dbtype, image_version, experimental: target.experimental === true, dependencies });

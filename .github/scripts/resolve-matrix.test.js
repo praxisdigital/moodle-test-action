@@ -111,7 +111,7 @@ test('Moodle 5.3 is required but its matrix rows are experimental', () => {
   assert.ok(rows.filter(row => row.moodle === 'MOODLE_502_STABLE').every(row => row.experimental === false));
 });
 
-test('database images use PHP overrides, target overrides, and defaults for both suites and products', () => {
+test('database images use product, PHP, and default versions for both suites and products', () => {
   const targets = catalogue.filter(target => ['4.0', '4.1', '5.0', '5.3'].includes(target.release));
   const versions = Object.fromEntries(targets.map(target => [`${target.repository}@${target.ref}`, coreBuilds[target.release]]));
   const rows = buildRows(targets, ['mysqli', 'pgsql', 'sqlsrv'], ['phpunit', 'behat'], '', versions);
@@ -132,8 +132,14 @@ test('database images use PHP overrides, target overrides, and defaults for both
   assert.equal(find('MOODLE_400_STABLE', '7.3', 'sqlsrv').image_version, '2022');
   assert.equal(find('MOODLE_400_STABLE', '7.3', 'sqlsrv').os, 'ubuntu-latest');
 
-  const overridden = { ...targets[0], image_versions: { mysqli: '8.1' } };
-  assert.equal(buildRows([overridden], ['mysqli'], ['phpunit'], '', versions, ['7.3'], imageConfig)[0].image_version, '8.1');
+  const overriddenConfig = validateImageConfig({
+    defaults: imageConfig.defaults,
+    overrides: { php: { '7.3': { mysqli: '5.7' } }, product: { moodle: { '4.0': { mysqli: '8.1' } } } },
+  });
+  const overriddenRows = buildRows(targets.filter(target => target.release === '4.0'),
+    ['mysqli'], ['phpunit'], '', versions, ['7.3'], overriddenConfig);
+  assert.equal(overriddenRows.find(row => row.moodle === 'MOODLE_400_STABLE').image_version, '8.1');
+  assert.equal(overriddenRows.find(row => row.moodle === 'WORKPLACE_400_LATEST').image_version, '5.7');
 });
 
 test('workplace ref and PHP range remain coupled', () => {
@@ -219,9 +225,11 @@ test('invalid catalogue entries and incompatible ranges fail rather than falling
   assert.throws(() => validateCatalogue({ targets: [catalogue[0], catalogue[0]] }), /Duplicate/);
   assert.throws(() => validateCatalogue({ targets: [{ ...catalogue[0], required: 'false' }] }), /Invalid target/);
   assert.throws(() => validateCatalogue({ targets: [{ ...catalogue[0], experimental: 'true' }] }), /Invalid target/);
-  assert.throws(() => validateCatalogue({ targets: [{ ...catalogue[0], image_versions: { mysqli: 8 } }] }), /Invalid image versions/);
+  assert.throws(() => validateCatalogue({ targets: [{ ...catalogue[0], image_versions: { mysqli: '8.0' } }] }), /Move image versions/);
   assert.throws(() => validateImageConfig({ ...imageConfig, defaults: { mysqli: '8.4' } }), /Missing default database image/);
-  assert.throws(() => validateImageConfig({ ...imageConfig, php_overrides: { '7.4': { other: '8.0' } } }), /Invalid image versions/);
+  assert.throws(() => validateImageConfig({ ...imageConfig, overrides: { php: { '7.4': { other: '8.0' } } } }), /Invalid image versions/);
+  assert.throws(() => validateImageConfig({ ...imageConfig, overrides: { product: { other: { '5.3': { pgsql: '17' } } } } }), /Invalid image overrides/);
+  assert.throws(() => validateImageConfig({ ...imageConfig, overrides: { product: { moodle: { '5x3': { pgsql: '17' } } } } }), /Invalid Moodle release/);
   assert.throws(() => validateCatalogue({ targets: [catalogue[0], { ...catalogue[0], product: 'workplace', required: true }] }), /Conflicting required/);
   assert.throws(() => readMetadata('<?php $plugin->version = 1;'), /requires/);
   assert.throws(() => readMetadata('<?php $plugin->requires = 1; $plugin->supported = get_versions();'), /supported/);

@@ -44,6 +44,10 @@ inputs:
     description: 'Database type (mysqli, pgsql, sqlsrv)'
     required: false
     default: 'mysqli'
+  mysql_version:
+    description: 'MySQL Docker image version'
+    required: false
+    default: '8.4'
   experimental:
     description: 'Is experimental run'
     required: false
@@ -69,7 +73,7 @@ runs:
       uses: praxisdigital/mysql-action@tmpfs-and-docker-patch
       with:
         collation server: utf8mb4_danish_ci
-        mysql version: 8
+        mysql version: ${{ inputs.mysql_version || '8.4' }}
         mysql database: test
         mysql user: test
         mysql password: test
@@ -99,7 +103,11 @@ runs:
         php-version: ${{ inputs.php }}
         coverage: xdebug
         ini-values: 'max_input_vars=5000'
-        extensions: sqlsrv, pdo_sqlsrv
+        extensions: >-
+          ${{ inputs.dbtype == 'sqlsrv' &&
+            ((inputs.php == '7.4' || inputs.php == '8.0') && 'sqlsrv-5.10.0, pdo_sqlsrv-5.10.0' ||
+            (inputs.php == '8.1' || inputs.php == '8.2') && 'sqlsrv-5.12.0, pdo_sqlsrv-5.12.0' ||
+            'sqlsrv, pdo_sqlsrv') || '' }}
 
     - name: Download & Setup MSSQL ODBC driver for PHP
       if: ${{ inputs.dbtype == 'sqlsrv' }}

@@ -148,8 +148,12 @@ const buildRows = (targets, dbTypes, suites, dependencies, coreVersions, phpVers
     }
     for (const suite of suites) for (const php of phpForTarget) for (const dbtype of dbTypes) {
       if (suite === 'behat' && !['mysqli', 'pgsql'].includes(dbtype)) continue;
+      // No Microsoft PHP driver supports both PHP 7.3 and SQL Server 2022.
+      if (dbtype === 'sqlsrv' && php === '7.3') continue;
       rows.push({ suite, php, moodle: target.ref, moodle_repository: target.repository,
-        os: 'ubuntu-latest', dbtype, experimental: target.experimental === true, dependencies });
+        os: dbtype === 'sqlsrv' && phpNumber(php) < 803 ? 'ubuntu-22.04' : 'ubuntu-latest', dbtype,
+        mysql_version: php === '7.3' ? '5.7' : target.number < 500 ? '8.0' : '8.4',
+        experimental: target.experimental === true, dependencies });
     }
   }
   if (rows.length > 256) throw new Error(`Matrix has ${rows.length} rows (GitHub limit: 256); narrow the catalogue or database choices`);

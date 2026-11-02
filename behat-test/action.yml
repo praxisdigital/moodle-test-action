@@ -14,6 +14,10 @@ inputs:
     description: 'Database type (mysqli or pgsql)'
     required: false
     default: 'mysqli'
+  mysql_version:
+    description: 'MySQL Docker image version'
+    required: false
+    default: '8.4'
   moodle_repository:
     description: 'Moodle repository, e.g. moodle/moodle'
     required: false
@@ -210,7 +214,7 @@ runs:
       uses: praxisdigital/mysql-action@tmpfs-and-docker-patch
       with:
         collation server: utf8mb4_unicode_ci
-        mysql version: 8
+        mysql version: ${{ inputs.mysql_version || '8.4' }}
         mysql database: test
         mysql user: test
         mysql password: test

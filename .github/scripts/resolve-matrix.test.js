@@ -110,6 +110,28 @@ test('Moodle 5.3 is required but its matrix rows are experimental', () => {
   assert.ok(rows.filter(row => row.moodle === 'MOODLE_502_STABLE').every(row => row.experimental === false));
 });
 
+test('database rows use MySQL versions and SQL Server runners compatible with their PHP and Moodle releases', () => {
+  const targets = catalogue.filter(target => target.product === 'moodle' && ['4.0', '4.1', '4.5', '5.0'].includes(target.release));
+  const versions = Object.fromEntries(targets.map(target => [`${target.repository}@${target.ref}`, coreBuilds[target.release]]));
+  const rows = buildRows(targets, ['mysqli', 'pgsql', 'sqlsrv'], ['phpunit', 'behat'], '', versions);
+  const find = (release, php, dbtype, suite = 'phpunit') => rows.find(row =>
+    row.moodle === `MOODLE_${release}_STABLE` && row.php === php && row.dbtype === dbtype && row.suite === suite);
+
+  assert.equal(find('400', '7.3', 'mysqli').mysql_version, '5.7');
+  assert.equal(find('400', '7.3', 'mysqli', 'behat').mysql_version, '5.7');
+  assert.equal(find('401', '7.4', 'mysqli').mysql_version, '8.0');
+  assert.equal(find('405', '8.3', 'mysqli').mysql_version, '8.0');
+  assert.equal(find('500', '8.2', 'mysqli').mysql_version, '8.4');
+  assert.equal(find('500', '8.2', 'mysqli', 'behat').mysql_version, '8.4');
+  assert.equal(find('400', '7.3', 'sqlsrv'), undefined);
+  assert.equal(find('400', '7.3', 'pgsql').os, 'ubuntu-latest');
+  assert.equal(find('401', '7.4', 'sqlsrv').os, 'ubuntu-22.04');
+  assert.equal(find('401', '8.1', 'sqlsrv').os, 'ubuntu-22.04');
+  assert.equal(find('500', '8.2', 'sqlsrv').os, 'ubuntu-22.04');
+  assert.equal(find('405', '8.3', 'sqlsrv').os, 'ubuntu-latest');
+  assert.ok(rows.filter(row => row.suite === 'behat').every(row => row.dbtype !== 'sqlsrv'));
+});
+
 test('workplace ref and PHP range remain coupled', () => {
   const selected = choose(['WORKPLACE_500_LATEST', 'WORKPLACE_502_LATEST'], 'WORKPLACE_500_LATEST', requires, ['workplace']);
   const key = `${selected[0].repository}@${selected[0].ref}`;

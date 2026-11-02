@@ -180,8 +180,13 @@ from the resolved PHPUnit matrix including experimental targets. Its target
 identities use the same function as the report producer. Numeric comparisons
 require each run's reports to cover its independently recorded expected set,
 identical successfully parsed target sets, and no rejected reports on either side.
-Otherwise the PR comment reports **Coverage incomplete / not comparable** and
-lists missing/rejected targets, withholding deltas and file additions/removals.
+If the PR itself is incomplete, the comment reports **Coverage incomplete / not
+comparable** and lists missing/rejected PR targets, withholding percentages,
+deltas and file additions/removals. A complete valid PR without a usable matching
+baseline instead shows **current PR coverage**, including total executable lines
+and a per-file table without deltas or added/removed labels. This also applies to
+a missing/failed baseline, timeout, incompatible matrix, or unusable downloaded
+base reports. The explanation identifies why no comparison is available.
 Failed test jobs still upload valid reports; failed jobs without a report cannot
 silently turn a partial matrix into a comparable diff.
 
@@ -211,9 +216,11 @@ No caller changes or additional permissions/triggers are needed.
 Configure the limit with reusable workflow input `coverage_baseline_wait_minutes`
 (or summary action input `baseline-wait-minutes`), from `0` to `60`; `0` disables
 waiting. Timeout posts **Coverage comparison pending** with a base-run link;
-failed/absent baselines produce an explicit unavailable message without numeric
-deltas. A timeout does not arrange a later automatic refresh: rerun the summary
+failed/absent baselines produce an explicit unavailable message alongside current
+PR coverage (when complete), without numeric deltas. A timeout does not arrange a later automatic refresh: rerun the summary
 after the linked run succeeds. Initial setup still requires a base-branch run.
+After the first PR merges, its successful base-branch push establishes a baseline
+for subsequent PR diffs; PR comments themselves are never used as baselines.
 
 The line map is generated locally from PHPUnit's raw coverage export, which is
 deleted before upload. It preserves executable method-start lines that Clover

@@ -100,7 +100,7 @@ runs:
           const {owner, repo} = context.repo;
           const issue_number = context.payload.pull_request.number;
           const marker = '<!-- moodle-test-action-coverage-summary -->';
-          const {findReports, mergeRun, comparisonIssues} = require(process.env.REPORTS_MODULE);
+          const {findReports, mergeRun, runIssues, comparisonIssues} = require(process.env.REPORTS_MODULE);
 
           function fmt(value) {
             return `${value.toFixed(2)}%`;
@@ -170,6 +170,44 @@ runs:
             return lines.join('\n');
           }
 
+          function buildCurrent(pr, explanation) {
+            const lines = [
+              marker,
+              '## Code Coverage',
+              '',
+              `**Current PR coverage: ${fmt(pr.percent)} (${pr.covered}/${pr.total} executable lines)**`,
+              '',
+              `PR artifacts merged: ${pr.artifactCount}`,
+              '',
+              'Showing current PR coverage only; no comparable base coverage is available yet.',
+              '',
+              explanation,
+              '',
+              'After a successful base-branch push produces complete matching coverage, subsequent PRs can show a diff.',
+              '',
+              '| File | Coverage | Covered / Executable lines |',
+              '| --- | ---: | ---: |',
+            ];
+            const files = Object.entries(pr.files).sort(([a], [b]) => a.localeCompare(b));
+            for (const [name, file] of files.slice(0, 100)) {
+              lines.push(`| \`${name}\` | ${fmt(file.percent)} | ${file.covered}/${file.total} |`);
+            }
+            if (files.length > 100) lines.push(`| ... | ... | ${files.length - 100} more files omitted |`);
+            return lines.join('\n');
+          }
+
+          function incomplete(issues) {
+            return reason([
+              '**Coverage incomplete / not comparable.**',
+              '',
+              'Current PR coverage is incomplete or invalid. Percentages, deltas and file additions/removals are withheld.',
+              '',
+              ...issues.map(issue => `- ${issue.replace(/[\r\n]/g, ' ')}`),
+              '',
+              'Rerun the missing or rejected PR targets.',
+            ].join('\n'));
+          }
+
           const prFiles = findReports(path.join(process.env.GITHUB_WORKSPACE, 'coverage-summary', 'pr'));
           const baseFiles = findReports(path.join(process.env.GITHUB_WORKSPACE, 'coverage-summary', 'base'));
           let body;
@@ -177,23 +215,20 @@ runs:
           try {
             if (prFiles.length === 0) {
               body = reason('**Coverage incomplete / not comparable.** This PR run did not produce any coverage artifacts. Numeric deltas and file additions/removals are withheld.');
-            } else if (process.env.BASE_ARTIFACTS_FOUND !== 'true') {
-              body = reason(process.env.BASE_COVERAGE_REASON || 'Coverage comparison unavailable: no matching complete baseline could be read. Run the base-branch workflow and rerun the coverage summary.');
-            } else if (baseFiles.length === 0) {
-              body = reason('**Coverage incomplete / not comparable.** Base-branch coverage artifacts could not be downloaded or contained no reports. Numeric deltas and file additions/removals are withheld.');
             } else {
-              const base = mergeRun(path.join(process.env.GITHUB_WORKSPACE, 'coverage-summary', 'base'), core.warning);
               const pr = mergeRun(path.join(process.env.GITHUB_WORKSPACE, 'coverage-summary', 'pr'), core.warning);
-              const issues = comparisonIssues(base, pr);
-              body = issues.length ? reason([
-                '**Coverage incomplete / not comparable.**',
-                '',
-                'Numeric deltas and file additions/removals are withheld because expected matrix coverage is incomplete, manifests are unavailable, target sets differ, or reports were rejected.',
-                '',
-                ...issues.map(issue => `- ${issue.replace(/[\r\n]/g, ' ')}`),
-                '',
-                'Rerun the missing or rejected targets and compare runs with the same matrix.',
-              ].join('\n')) : buildDiff(base, pr);
+              const prIssues = runIssues('PR', pr);
+              if (prIssues.length) {
+                body = incomplete(prIssues);
+              } else if (process.env.BASE_ARTIFACTS_FOUND !== 'true') {
+                body = buildCurrent(pr, process.env.BASE_COVERAGE_REASON || 'No matching complete baseline could be read. Run the base-branch workflow to establish a baseline.');
+              } else if (baseFiles.length === 0) {
+                body = buildCurrent(pr, 'Base-branch coverage artifacts could not be downloaded or contained no reports.');
+              } else {
+                const base = mergeRun(path.join(process.env.GITHUB_WORKSPACE, 'coverage-summary', 'base'), core.warning);
+                const issues = comparisonIssues(base, pr);
+                body = issues.length ? buildCurrent(pr, issues.map(issue => `- ${issue.replace(/[\r\n]/g, ' ')}`).join('\n')) : buildDiff(base, pr);
+              }
             }
           } catch (error) {
             body = reason(`No coverage diff is available because coverage parsing failed: ${error.message}`);

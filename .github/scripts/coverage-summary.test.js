@@ -135,11 +135,12 @@ test('producer skips artifacts with missing or empty exact line reports', () => 
   } finally { fs.rmSync(dir, {recursive: true, force: true}); }
 });
 
-test('baseline timeout explanation is posted without numeric matrix-error output', async () => {
+test('baseline timeout posts complete current coverage with run link but no deltas', async () => {
   const dir = scratch();
   let body;
   try {
     artifact(path.join(dir, 'coverage-summary/pr', targetA), report({1: true}));
+    manifest(path.join(dir, 'coverage-summary/pr'), [targetA]);
     await vm.runInNewContext(`(async () => {${action.runs.steps.find(s => s.name === 'Commenting combined PR coverage diff').with.script}\n})()`, {
       require, process: {env: {GITHUB_WORKSPACE: dir, REPORTS_MODULE: path.resolve('coverage-summary/reports.js'),
         BASE_ARTIFACTS_FOUND: 'false', BASE_COVERAGE_REASON: 'Coverage comparison pending: base run https://github.com/test/plugin/actions/runs/2'}},
@@ -149,16 +150,68 @@ test('baseline timeout explanation is posted without numeric matrix-error output
     });
     assert.match(body, /Coverage comparison pending/);
     assert.match(body, /actions\/runs\/2/);
-    assert.doesNotMatch(body, /not comparable|\| Statements \||\d+\.\d+%/);
+    assert.match(body, /Current PR coverage: 100\.00% \(1\/1 executable lines\)/);
+    assert.doesNotMatch(body, /not comparable|\| Statements \||\| Diff \|/);
   } finally { fs.rmSync(dir, {recursive: true, force: true}); }
+});
+
+test('complete PR shows current totals and per-file coverage for unavailable or unusable baselines', async () => {
+  for (const baseline of ['absent', 'failed', 'empty-download', 'invalid-metadata', 'incomplete']) {
+    const dir = scratch();
+    let comment;
+    try {
+      const prRoot = path.join(dir, 'coverage-summary/pr');
+      artifact(path.join(prRoot, targetA), report({1: true, 2: false}));
+      manifest(prRoot, [targetA]);
+      if (['invalid-metadata', 'incomplete'].includes(baseline)) {
+        const baseRoot = path.join(dir, 'coverage-summary/base');
+        artifact(path.join(baseRoot, targetA), report({1: true, 2: true}), baseline === 'invalid-metadata' ? '{}' : metadata);
+        manifest(baseRoot, baseline === 'incomplete' ? [targetA, targetB] : [targetA]);
+      }
+      await vm.runInNewContext(`(async () => {${action.runs.steps.find(s => s.name === 'Commenting combined PR coverage diff').with.script}\n})()`, {
+        require, process: {env: {GITHUB_WORKSPACE: dir, REPORTS_MODULE: path.resolve('coverage-summary/reports.js'),
+          BASE_ARTIFACTS_FOUND: ['absent', 'failed'].includes(baseline) ? 'false' : 'true',
+          BASE_COVERAGE_REASON: baseline === 'failed' ? 'Coverage comparison unavailable: base workflow failed.' : ''}},
+        context: {repo: {owner: 'test', repo: 'plugin'}, payload: {pull_request: {number: 4}}}, core: {warning: () => {}},
+        github: {paginate: async () => [{id: 7, user: {type: 'Bot'}, body: '<!-- moodle-test-action-coverage-summary -->'}], rest: {issues: {
+          listComments: () => {}, createComment: assert.fail, updateComment: async value => { comment = value; },
+        }}},
+      });
+      assert.equal(comment.comment_id, 7);
+      assert.match(comment.body, /## Code Coverage/);
+      assert.match(comment.body, /Current PR coverage: 50\.00% \(1\/2 executable lines\)/);
+      assert.match(comment.body, /`classes\/example.php` \| 50\.00% \| 1\/2/);
+      assert.match(comment.body, /subsequent PRs can show a diff/);
+      assert.doesNotMatch(comment.body, /\| Diff \||\| Base \||\| removed \||\| added \||[+-]\d+\.\d+%/);
+    } finally { fs.rmSync(dir, {recursive: true, force: true}); }
+  }
+});
+
+test('no baseline does not allow an incomplete or invalid PR to present a current percentage', async () => {
+  for (const invalid of ['missing-target', 'rejected-report', 'missing-manifest']) {
+    const dir = scratch();
+    let body;
+    try {
+      const root = path.join(dir, 'coverage-summary/pr');
+      artifact(path.join(root, targetA), invalid === 'rejected-report' ? '{' : report({1: true}));
+      if (invalid !== 'missing-manifest') manifest(root, invalid === 'missing-target' ? [targetA, targetB] : [targetA]);
+      await vm.runInNewContext(`(async () => {${action.runs.steps.find(s => s.name === 'Commenting combined PR coverage diff').with.script}\n})()`, {
+        require, process: {env: {GITHUB_WORKSPACE: dir, REPORTS_MODULE: path.resolve('coverage-summary/reports.js'), BASE_ARTIFACTS_FOUND: 'false'}},
+        context: {repo: {owner: 'test', repo: 'plugin'}, payload: {pull_request: {number: 4}}}, core: {warning: () => {}},
+        github: {paginate: async () => [], rest: {issues: {listComments: () => {}, createComment: async value => { body = value.body; }}}},
+      });
+      assert.match(body, /Coverage incomplete \/ not comparable/);
+      assert.doesNotMatch(body, /Current PR coverage:|\d+\.\d+%/);
+    } finally { fs.rmSync(dir, {recursive: true, force: true}); }
+  }
 });
 
 test('incomplete or rejected target sets never produce numeric deltas or removed-file rows', async () => {
   const cases = [
-    {base: {a: report({1: true, 2: false}), b: report({1: false, 2: true})}, pr: {a: report({1: true, 2: false})}, expected: /PR missing usable targets: b/},
-    {base: {a: report({1: true})}, pr: {b: report({1: true})}, expected: /Base missing usable targets: b/},
-    {base: {a: report({1: true}), b: '{'}, pr: {a: report({1: true})}, expected: /Base rejected target b/},
-    {base: {a: report({1: true})}, pr: {a: report({1: true}), b: '{'}, expected: /PR rejected target b/},
+    {base: {a: report({1: true, 2: false}), b: report({1: false, 2: true})}, pr: {a: report({1: true, 2: false})}, prExpected: ['a', 'b'], expected: /PR missing expected targets: coverage-target-b/},
+    {base: {a: report({1: true})}, pr: {b: report({1: true})}, currentOnly: true, expected: /Base missing usable targets: coverage-target-b/},
+    {base: {a: report({1: true}), b: '{'}, pr: {a: report({1: true})}, currentOnly: true, expected: /Base rejected target coverage-target-b/},
+    {base: {a: report({1: true})}, pr: {a: report({1: true}), b: '{'}, expected: /PR rejected target coverage-target-b/},
     {base: {a: report({1: true})}, pr: {a: '{'}, expected: /PR has no usable coverage targets/},
     {base: {a: report({1: true})}, pr: {}, expected: /did not produce any coverage artifacts/},
   ];
@@ -167,7 +220,10 @@ test('incomplete or rejected target sets never produce numeric deltas or removed
     let body;
     try {
       for (const side of ['base', 'pr']) {
-        for (const [target, lines] of Object.entries(fixture[side])) artifact(path.join(dir, 'coverage-summary', side, target), lines);
+        const root = path.join(dir, 'coverage-summary', side);
+        for (const [target, lines] of Object.entries(fixture[side])) artifact(path.join(root, `coverage-target-${target}`), lines);
+        const expected = side === 'pr' && fixture.prExpected ? fixture.prExpected : Object.keys(fixture[side]);
+        if (expected.length) manifest(root, expected.map(target => `coverage-target-${target}`));
       }
       await vm.runInNewContext(`(async () => {${action.runs.steps.find(s => s.name === 'Commenting combined PR coverage diff').with.script}\n})()`, {
         require, process: {env: {GITHUB_WORKSPACE: dir, REPORTS_MODULE: path.resolve('coverage-summary/reports.js'), BASE_ARTIFACTS_FOUND: 'true'}},
@@ -177,9 +233,10 @@ test('incomplete or rejected target sets never produce numeric deltas or removed
           listComments: () => {}, createComment: async value => { body = value.body; },
         }}},
       });
-      assert.match(body, /Coverage incomplete \/ not comparable/);
+      assert.match(body, fixture.currentOnly ? /Current PR coverage:/ : /Coverage incomplete \/ not comparable/);
       assert.match(body, fixture.expected);
-      assert.doesNotMatch(body, /\| Statements \||\| File \||\d+\.\d+%|\| removed \|/);
+      assert.doesNotMatch(body, /\| Statements \||\| Diff \||\| removed \|/);
+      if (!fixture.currentOnly) assert.doesNotMatch(body, /\d+\.\d+%/);
     } finally { fs.rmSync(dir, {recursive: true, force: true}); }
   }
 });
@@ -213,7 +270,6 @@ test('expected A,B with only A on both sides blocks the numeric PR comment', asy
     });
     assert.match(body, /Coverage incomplete \/ not comparable/);
     assert.match(body, /PR missing expected targets: coverage-target-b/);
-    assert.match(body, /Base missing expected targets: coverage-target-b/);
     assert.doesNotMatch(body, /\| Statements \||\d+\.\d+%/);
   } finally { fs.rmSync(dir, {recursive: true, force: true}); }
 });

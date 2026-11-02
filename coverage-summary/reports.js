@@ -81,19 +81,24 @@ function mergeReports(reports, warning = () => {}) {
   return result;
 }
 
-function comparisonIssues(base, pr) {
+function runIssues(label, side) {
   const issues = [];
+  if (side.manifestError) issues.push(`${label} expected-target manifest: ${side.manifestError}`);
+  const expected = side.expectedTargets || [];
+  const absent = expected.filter(target => !side.targets.includes(target));
+  if (absent.length) issues.push(`${label} missing expected targets: ${absent.join(', ')}`);
+  const unexpected = side.targets.filter(target => !expected.includes(target));
+  if (unexpected.length) issues.push(`${label} unexpected targets: ${unexpected.join(', ')}`);
+  for (const {target, reason} of side.rejected) issues.push(`${label} rejected target ${target}: ${reason}`);
+  if (!side.targets.length) issues.push(`${label} has no usable coverage targets.`);
+  return issues;
+}
+
+function comparisonIssues(base, pr) {
+  const issues = [...runIssues('PR', pr), ...runIssues('Base', base)];
   for (const [label, side, other] of [['PR', pr, base], ['Base', base, pr]]) {
-    if (side.manifestError) issues.push(`${label} expected-target manifest: ${side.manifestError}`);
-    const expected = side.expectedTargets || [];
-    const absent = expected.filter(target => !side.targets.includes(target));
-    if (absent.length) issues.push(`${label} missing expected targets: ${absent.join(', ')}`);
-    const unexpected = side.targets.filter(target => !expected.includes(target));
-    if (unexpected.length) issues.push(`${label} unexpected targets: ${unexpected.join(', ')}`);
     const missing = other.targets.filter(target => !side.targets.includes(target));
     if (missing.length) issues.push(`${label} missing usable targets: ${missing.join(', ')}`);
-    for (const {target, reason} of side.rejected) issues.push(`${label} rejected target ${target}: ${reason}`);
-    if (!side.targets.length) issues.push(`${label} has no usable coverage targets.`);
   }
   return issues;
 }
@@ -118,4 +123,4 @@ function mergeRun(dir, warning = () => {}) {
   return result;
 }
 
-module.exports = {parseReport, findReports, mergeReports, mergeRun, readExpectedTargets, relativeName, comparisonIssues};
+module.exports = {parseReport, findReports, mergeReports, mergeRun, readExpectedTargets, relativeName, runIssues, comparisonIssues};

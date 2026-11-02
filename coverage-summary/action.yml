@@ -1,0 +1,250 @@
+name: moodle-test-action coverage summary
+description: 'Merge Moodle PHPUnit coverage artifacts and comment a combined PR diff'
+
+inputs:
+  artifact-prefix:
+    description: 'Coverage artifact name prefix to include in the summary'
+    required: false
+    default: 'coverage-'
+  baseline-wait-minutes:
+    description: 'Maximum minutes to wait for an in-progress matching base-branch run (0 disables waiting; maximum 60)'
+    required: false
+    default: '15'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Downloading current run coverage artifacts
+      if: ${{ always() }}
+      continue-on-error: true
+      uses: actions/download-artifact@v4
+      with:
+        pattern: ${{ inputs.artifact-prefix }}*
+        path: ${{ github.workspace }}/coverage-summary/pr
+        merge-multiple: false
+
+    - name: Download current run expected targets
+      if: ${{ always() }}
+      continue-on-error: true
+      uses: actions/download-artifact@v4
+      with:
+        name: coverage-expected-targets
+        path: ${{ github.workspace }}/coverage-summary/pr/coverage-expected-targets
+
+    - name: Finding base branch coverage run
+      if: ${{ always() && github.event_name == 'pull_request' }}
+      uses: actions/github-script@v7
+      env:
+        ARTIFACT_PREFIX: ${{ inputs.artifact-prefix }}
+        REPORTS_MODULE: ${{ github.action_path }}/reports.js
+        BASELINE_MODULE: ${{ github.action_path }}/baseline.js
+        BASELINE_WAIT_MINUTES: ${{ inputs.baseline-wait-minutes }}
+      with:
+        github-token: ${{ github.token }}
+        script: |
+          const fs = require('fs');
+          const path = require('path');
+          const {selectBaseline} = require(process.env.BASELINE_MODULE);
+          const {readExpectedTargets} = require(process.env.REPORTS_MODULE);
+          let result;
+          try {
+            const manifest = path.join(process.env.GITHUB_WORKSPACE, 'coverage-summary', 'pr', 'coverage-expected-targets', 'expected-targets.json');
+            const prTargets = readExpectedTargets(fs.readFileSync(manifest, 'utf8'));
+            result = await selectBaseline({github, context, prTargets,
+              prefix: process.env.ARTIFACT_PREFIX, waitMinutes: process.env.BASELINE_WAIT_MINUTES,
+              notice: message => core.notice(message), warning: message => core.warning(message)});
+          } catch (error) {
+            result = {reason: `Coverage comparison unavailable: ${error.message}`};
+            core.warning(result.reason);
+          }
+          fs.appendFileSync(process.env.GITHUB_ENV, `base_coverage_run_id=${result.runId || ''}\n`);
+          fs.appendFileSync(process.env.GITHUB_ENV, `base_coverage_artifacts_found=${Boolean(result.runId)}\n`);
+          fs.appendFileSync(process.env.GITHUB_ENV, `base_coverage_reason=${(result.reason || '').replace(/[\r\n]/g, ' ')}\n`);
+
+    - name: Downloading base branch coverage artifacts
+      if: ${{ always() && github.event_name == 'pull_request' && env.base_coverage_artifacts_found == 'true' }}
+      continue-on-error: true
+      uses: actions/download-artifact@v4
+      with:
+        pattern: ${{ inputs.artifact-prefix }}*
+        path: ${{ github.workspace }}/coverage-summary/base
+        merge-multiple: false
+        run-id: ${{ env.base_coverage_run_id }}
+        github-token: ${{ github.token }}
+        repository: ${{ github.repository }}
+
+    - name: Download base run expected targets
+      if: ${{ always() && github.event_name == 'pull_request' && env.base_coverage_artifacts_found == 'true' }}
+      continue-on-error: true
+      uses: actions/download-artifact@v4
+      with:
+        name: coverage-expected-targets
+        path: ${{ github.workspace }}/coverage-summary/base/coverage-expected-targets
+        run-id: ${{ env.base_coverage_run_id }}
+        github-token: ${{ github.token }}
+        repository: ${{ github.repository }}
+
+    - name: Commenting combined PR coverage diff
+      if: ${{ always() && github.event_name == 'pull_request' }}
+      continue-on-error: true
+      uses: actions/github-script@v7
+      env:
+        ARTIFACT_PREFIX: ${{ inputs.artifact-prefix }}
+        BASE_ARTIFACTS_FOUND: ${{ env.base_coverage_artifacts_found }}
+        BASE_COVERAGE_REASON: ${{ env.base_coverage_reason }}
+        REPORTS_MODULE: ${{ github.action_path }}/reports.js
+      with:
+        github-token: ${{ github.token }}
+        script: |
+          const path = require('path');
+          const {owner, repo} = context.repo;
+          const issue_number = context.payload.pull_request.number;
+          const marker = '<!-- moodle-test-action-coverage-summary -->';
+          const {findReports, mergeRun, runIssues, comparisonIssues} = require(process.env.REPORTS_MODULE);
+
+          function fmt(value) {
+            return `${value.toFixed(2)}%`;
+          }
+
+          function delta(value) {
+            const sign = value > 0 ? '+' : '';
+            return `${sign}${value.toFixed(2)}%`;
+          }
+
+          function cell(value) {
+            return value ? fmt(value.percent) : 'n/a';
+          }
+
+          function reason(message) {
+            return [
+              marker,
+              '## Combined Code Coverage Diff',
+              '',
+              message,
+            ].join('\n');
+          }
+
+          function buildDiff(base, pr) {
+            const rows = [];
+            const names = new Set([...Object.keys(base.files), ...Object.keys(pr.files)]);
+            for (const name of names) {
+              const before = base.files[name];
+              const after = pr.files[name];
+              const change = before && after ? after.percent - before.percent : null;
+              rows.push({name, before, after, change});
+            }
+
+            rows.sort((a, b) => {
+              if (a.change === null && b.change === null) return a.name.localeCompare(b.name);
+              if (a.change === null) return 1;
+              if (b.change === null) return -1;
+              return a.change - b.change;
+            });
+
+            const lines = [
+              marker,
+              '## Combined Code Coverage Diff',
+              '',
+              `Artifact prefix: \`${process.env.ARTIFACT_PREFIX}\``,
+              `PR artifacts merged: ${pr.artifactCount}`,
+              `Base artifacts merged: ${base.artifactCount}`,
+              '',
+              '| Total | Base | PR | Diff |',
+              '| --- | ---: | ---: | ---: |',
+              `| Statements | ${fmt(base.percent)} (${base.covered}/${base.total}) | ${fmt(pr.percent)} (${pr.covered}/${pr.total}) | ${delta(pr.percent - base.percent)} |`,
+              '',
+              '| File | Base | PR | Diff |',
+              '| --- | ---: | ---: | ---: |',
+            ];
+
+            const shown = rows.slice(0, 100);
+            for (const row of shown) {
+              const diff = row.change === null ? (row.before ? 'removed' : 'added') : delta(row.change);
+              lines.push(`| \`${row.name}\` | ${cell(row.before)} | ${cell(row.after)} | ${diff} |`);
+            }
+
+            if (rows.length > shown.length) {
+              lines.push('', `Showing ${shown.length} of ${rows.length} files to keep this comment manageable. The remaining ${rows.length - shown.length} file rows are not displayed; all files are included in the overall coverage totals above.`);
+            }
+
+            return lines.join('\n');
+          }
+
+          function buildCurrent(pr, explanation) {
+            const lines = [
+              marker,
+              '## Code Coverage',
+              '',
+              `**Current PR coverage: ${fmt(pr.percent)} (${pr.covered}/${pr.total} executable lines)**`,
+              '',
+              `PR artifacts merged: ${pr.artifactCount}`,
+              '',
+              'Showing current PR coverage only; no comparable base coverage is available yet.',
+              '',
+              explanation,
+              '',
+              'After a successful base-branch push produces complete matching coverage, subsequent PRs can show a diff.',
+              '',
+              '| File | Coverage | Covered / Executable lines |',
+              '| --- | ---: | ---: |',
+            ];
+            const files = Object.entries(pr.files).sort(([a], [b]) => a.localeCompare(b));
+            for (const [name, file] of files.slice(0, 100)) {
+              lines.push(`| \`${name}\` | ${fmt(file.percent)} | ${file.covered}/${file.total} |`);
+            }
+            if (files.length > 100) {
+              lines.push('', `Showing 100 of ${files.length} files to keep this comment manageable. The remaining ${files.length - 100} file rows are not displayed; all files are included in the overall coverage totals above.`);
+            }
+            return lines.join('\n');
+          }
+
+          function incomplete(issues) {
+            return reason([
+              '**Coverage incomplete / not comparable.**',
+              '',
+              'Current PR coverage is incomplete or invalid. Percentages, deltas and file additions/removals are withheld.',
+              '',
+              ...issues.map(issue => `- ${issue.replace(/[\r\n]/g, ' ')}`),
+              '',
+              'Rerun the missing or rejected PR targets.',
+            ].join('\n'));
+          }
+
+          const prFiles = findReports(path.join(process.env.GITHUB_WORKSPACE, 'coverage-summary', 'pr'));
+          const baseFiles = findReports(path.join(process.env.GITHUB_WORKSPACE, 'coverage-summary', 'base'));
+          let body;
+
+          try {
+            if (prFiles.length === 0) {
+              body = reason('**Coverage incomplete / not comparable.** This PR run did not produce any coverage artifacts. Numeric deltas and file additions/removals are withheld.');
+            } else {
+              const pr = mergeRun(path.join(process.env.GITHUB_WORKSPACE, 'coverage-summary', 'pr'), core.warning);
+              const prIssues = runIssues('PR', pr);
+              if (prIssues.length) {
+                body = incomplete(prIssues);
+              } else if (process.env.BASE_ARTIFACTS_FOUND !== 'true') {
+                body = buildCurrent(pr, process.env.BASE_COVERAGE_REASON || 'No matching complete baseline could be read. Run the base-branch workflow to establish a baseline.');
+              } else if (baseFiles.length === 0) {
+                body = buildCurrent(pr, 'Base-branch coverage artifacts could not be downloaded or contained no reports.');
+              } else {
+                const base = mergeRun(path.join(process.env.GITHUB_WORKSPACE, 'coverage-summary', 'base'), core.warning);
+                const issues = comparisonIssues(base, pr);
+                body = issues.length ? buildCurrent(pr, issues.map(issue => `- ${issue.replace(/[\r\n]/g, ' ')}`).join('\n')) : buildDiff(base, pr);
+              }
+            }
+          } catch (error) {
+            body = reason(`No coverage diff is available because coverage parsing failed: ${error.message}`);
+          }
+
+          const comments = await github.paginate(github.rest.issues.listComments, {
+            owner,
+            repo,
+            issue_number,
+            per_page: 100,
+          });
+          const existing = comments.find((comment) => comment.user.type === 'Bot' && comment.body.includes(marker));
+          if (existing) {
+            await github.rest.issues.updateComment({owner, repo, comment_id: existing.id, body});
+          } else {
+            await github.rest.issues.createComment({owner, repo, issue_number, body});
+          }

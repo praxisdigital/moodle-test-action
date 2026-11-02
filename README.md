@@ -125,6 +125,19 @@ With `automatic: 'false'`, the legacy fallbacks are Moodle 5.2, PHP 8.4, `moodle
 
 ## Automatic Moodle matrix
 
+To run Moodle only without changing the minimal caller workflow, create a
+repository **Actions variable** (not a secret) named `MOODLE_PRODUCTS` with the
+value `["moodle"]` under **Settings → Secrets and variables → Actions → Variables**:
+
+```sh
+gh variable set MOODLE_PRODUCTS --body '["moodle"]' --repo OWNER/REPO
+```
+
+In automatic mode, product selection uses `with: products` first, then
+`vars.MOODLE_PRODUCTS`, then both Moodle and Workplace. This applies to normal
+runs and on-demand `#behat` runs. Use `["workplace"]` for Workplace only, or
+`["moodle", "workplace"]` for both. Legacy mode keeps its explicit repository matrix.
+
 The central [JSON catalogue](.github/moodle-test-targets.json) defines available test targets. Moodle has 4.0–4.5 and 5.0–5.3; Workplace has 4.0–4.1, 4.3–4.5 and 5.0–5.2, using `WORKPLACE_*_LATEST` rather than numbered or rolling refs. Each entry couples a release, product, exact core repository/ref, `required` flag and inclusive `php_min`/`php_max` versions. All PHP minor versions between those bounds are tested; for example `8.2`–`8.4` generates 8.2, 8.3 and 8.4. Set `version_file: "public/version.php"` for core branches using Moodle's new `public/` layout (otherwise the root file is used). Set `experimental: true` to make test failures non-blocking and skip a target with a warning when its core version cannot be read or its PHP range does not match the filter. The private Workplace fork's PHP support, refs and version-file paths still need verification with App access.
 
 For a PR, setup reads `version.php` from the PR **merge ref** and uses the PR's base branch; for a push it uses that commit and branch. Plugin release branches partition **both products'** catalogues by version: `MOODLE_41_STABLE` owns releases from 4.1 up to (but not including) the next release branch in that plugin repository. The branch prefix is not a product restriction. `41`/`401` and `50`/`500` normalize to the same releases. Workplace `*_LATEST` branches are also recognized. The first branch-name segment must be at least four characters, so issue branches beginning `mma_`, `tk_`, or `abc_` do not create release boundaries. PRs into **any** branch still run. Both products require a readable core ref, so private Workplace tests need GitHub App access even when the plugin branch starts `MOODLE_`.
@@ -138,6 +151,97 @@ The tested revision's `$plugin->requires`, `$plugin->supported` and `$plugin->in
 Plugin component and install path are auto-detected from `$plugin->component` in `version.php`. Use `plugin_component` or `plugin_path` only for unusual plugins.
 
 When using the root action, `action_ref` defaults to the same ref as `uses: praxisdigital/moodle-test-action@...`. The reusable workflow's `action_ref` defaults to `master`; when calling a development ref of `.github/workflows/ci.yml`, pass that same development ref as `action_ref` so setup checks out the matching resolver and catalogue.
+
+## Code coverage
+
+PHPUnit runs enable Xdebug coverage and upload Clover XML, an exact executable-line
+JSON map, a text summary, and
+plugin-path metadata as a `coverage-*` artifact for each matrix target, including
+failed runs that produced reports. The reusable workflow automatically runs a
+final coverage job on pull requests, merges the matrix reports, and updates one
+PR comment with total and file-by-file coverage differences against the latest
+successful base-branch run with complete coverage and the same expected targets.
+
+Fallback runs using Moodle's generated PHPUnit configuration replace its source
+filter with the plugin directory (excluding `tests` and `vendor`). Plugin-owned
+PHPUnit configurations retain explicit source filters and exclusions; configurations
+without an include filter receive plugin-scoped coverage automatically. Temporary
+configurations stay beside their originals to preserve relative paths. The summary also rejects
+files outside the plugin path and requires valid plugin-path metadata. Artifacts
+are published only when non-empty Clover and executable-line reports exist; baseline discovery
+skips older metadata-only artifacts and continues to the next successful run
+until a usable executable-line report is found. Baseline discovery and merging
+share metadata, path, and executable-line validation. Old Clover-only artifacts
+are skipped: run the base-branch workflow again after upgrading.
+
+Before launching tests, reusable workflow setup uploads a versioned
+`coverage-expected-targets` artifact containing `expected-targets.json`, derived
+from the resolved PHPUnit matrix including experimental targets. Its target
+identities use the same function as the report producer. Numeric comparisons
+require each run's reports to cover its independently recorded expected set,
+identical successfully parsed target sets, and no rejected reports on either side.
+If the PR itself is incomplete, the comment reports **Coverage incomplete / not
+comparable** and lists missing/rejected PR targets, withholding percentages,
+deltas and file additions/removals. A complete valid PR without a usable matching
+baseline instead shows **current PR coverage**, including total executable lines
+and a per-file table without deltas or added/removed labels. This also applies to
+a missing/failed baseline, timeout, incompatible matrix, or unusable downloaded
+base reports. The explanation identifies why no comparison is available.
+Failed test jobs still upload valid reports; failed jobs without a report cannot
+silently turn a partial matrix into a comparable diff.
+
+Standalone/root-action callers must also upload `coverage-expected-targets`
+before tests. Generate `expected-targets.json` with
+`coverage-summary/targets.js`'s `expectedTargets(rows)` using their resolved
+matrix rows (`suite: 'phpunit'`, `moodle`, `php`, `dbtype`, `os`,
+`moodle_repository`), rather than deriving expectations from received reports.
+Missing/invalid manifests withhold numeric comparisons. Baseline runs predating
+the manifest must be refreshed.
+
+Target identities include the normalized `experimental` flag, so legacy matrices
+containing both `false` and `true` remain distinct. Baseline selection uses the
+newest successful push with a complete expected matrix matching the PR and no
+rejected reports, continuing to older runs when a newer candidate is incomplete
+or incompatible. The mandatory
+manifest is downloaded independently of `artifact-prefix`, including when the
+report prefix is `coverage-target-`.
+
+If no matching complete baseline exists but a base-branch push is queued or
+running, the summary polls every 30 seconds for up to 15 minutes, then selects
+the completed matching baseline automatically. A run whose setup has not yet
+published its manifest is also allowed time to finish. A known different matrix
+does not cause a wait. Existing matching complete baselines are used immediately.
+No caller changes or additional permissions/triggers are needed.
+
+Configure the limit with reusable workflow input `coverage_baseline_wait_minutes`
+(or summary action input `baseline-wait-minutes`), from `0` to `60`; `0` disables
+waiting. Timeout posts **Coverage comparison pending** with a base-run link;
+failed/absent baselines produce an explicit unavailable message alongside current
+PR coverage (when complete), without numeric deltas. A timeout does not arrange a later automatic refresh: rerun the summary
+after the linked run succeeds. Initial setup still requires a base-branch run.
+After the first PR merges, its successful base-branch push establishes a baseline
+for subsequent PR diffs; PR comments themselves are never used as baselines.
+
+The line map is generated locally from PHPUnit's raw coverage export, which is
+deleted before upload. It preserves executable method-start lines that Clover
+represents as methods, without counting non-executable method declarations.
+
+Keep the caller workflow enabled for pushes to PR base branches as shown above
+so baseline artifacts are available. The caller needs `actions: read` and
+`issues: write` and `pull-requests: write` in addition to the normal CI permissions. If no baseline exists,
+the comment explains why a diff is unavailable. When testing a development ref,
+set `action_ref` to the same ref as the reusable workflow.
+
+Users of the root compatibility action must add a final job themselves:
+
+```yaml
+  coverage:
+    needs: PHPUnit
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: praxisdigital/moodle-test-action/coverage-summary@master
+```
 
 ## Behat
 

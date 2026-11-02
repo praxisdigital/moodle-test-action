@@ -811,6 +811,7 @@ jobs:
           moodle: ${{ matrix.moodle }}
           php: ${{ matrix.php }}
           dbtype: ${{ matrix.dbtype }}
+          image_version: ${{ matrix.image_version }}
           moodle_repository: ${{ matrix.moodle_repository }}
           dependencies: ${{ matrix.dependencies }}
           additional_behat_arguments: ${{ format('{0} {1}', needs.setup.outputs.behat_arguments, needs.setup.outputs.behat_tag_arguments) }}
@@ -837,6 +838,7 @@ jobs:
           org: ${{ inputs.org || vars.MOODLE_ORG || 'praxisdigital' }}
           dependencies: ${{ matrix.dependencies }}
           dbtype: ${{ matrix.dbtype }}
+          image_version: ${{ matrix.image_version }}
           experimental: ${{ matrix.experimental }}
           PRIVATE_REPO_TOKEN: ${{ steps.app-token.outputs.token }}
           fail_on_empty_test_suite: ${{ inputs.fail_on_empty_test_suite }}

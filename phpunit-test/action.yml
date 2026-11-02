@@ -44,6 +44,10 @@ inputs:
     description: 'Database type (mysqli, pgsql, sqlsrv)'
     required: false
     default: 'mysqli'
+  image_version:
+    description: 'Database server image version selected by the reusable workflow'
+    required: false
+    default: ''
   experimental:
     description: 'Is experimental run'
     required: false
@@ -69,7 +73,7 @@ runs:
       uses: praxisdigital/mysql-action@tmpfs-and-docker-patch
       with:
         collation server: utf8mb4_danish_ci
-        mysql version: 8
+        mysql version: ${{ inputs.image_version || '8' }}
         mysql database: test
         mysql user: test
         mysql password: test
@@ -79,7 +83,7 @@ runs:
       if: ${{ inputs.dbtype == 'pgsql' }}
       uses: m4nu56/postgresql-action@v1
       with:
-        postgresql version: ${{ inputs.moodle == 'MOODLE_503_STABLE' && '17' || '16' }}
+        postgresql version: ${{ inputs.image_version || (inputs.moodle == 'MOODLE_503_STABLE' && '17' || '16') }}
         postgresql db: test
         postgresql user: test
         postgresql password: test
@@ -88,7 +92,7 @@ runs:
       if: ${{ inputs.dbtype == 'sqlsrv' }}
       uses: praxisdigital/setup-mssql-server@main
       with:
-        version: 2022
+        version: ${{ inputs.image_version || '2022' }}
         user: test
         password: test
         database: test

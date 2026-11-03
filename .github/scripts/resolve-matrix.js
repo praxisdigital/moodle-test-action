@@ -45,6 +45,34 @@ const releaseNumber = value => {
   return Number(match[1]) * 100 + Number(match[2]);
 };
 
+const parseDependencyMatrix = raw => {
+  if (!String(raw || '').trim()) return [];
+  let matrix;
+  try {
+    matrix = JSON.parse(raw);
+  } catch (error) {
+    throw new Error(`MOODLE_PLUGIN_DEPENDENCY_MATRIX must be valid JSON: ${error.message}`);
+  }
+  if (!isRecord(matrix)) throw new Error('MOODLE_PLUGIN_DEPENDENCY_MATRIX must be a JSON object of release-to-dependency arrays');
+  return Object.entries(matrix).map(([release, dependencies]) => {
+    if (!/^[1-9]\d*\.(?:0|[1-9]\d*)$/.test(release)) throw new Error(`Invalid MOODLE_PLUGIN_DEPENDENCY_MATRIX release: ${release}`);
+    if (!Array.isArray(dependencies) || dependencies.some(dep =>
+      typeof dep !== 'string' || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+@[^\s@]+$/.test(dep))) {
+      throw new Error(`MOODLE_PLUGIN_DEPENDENCY_MATRIX ${release} must be an array of org/repo@ref strings`);
+    }
+    return { number: releaseNumber(release), dependencies: [...new Set(dependencies)].join(' ') };
+  }).sort((a, b) => a.number - b.number);
+};
+
+const dependenciesForRelease = (release, dependencies, dependencyMatrix) => {
+  let selected = dependencies;
+  for (const entry of dependencyMatrix) {
+    if (entry.number > release) break;
+    selected = entry.dependencies;
+  }
+  return selected;
+};
+
 // Moodle uses both 41 and 401 for 4.1, and both 50 and 500 for 5.0.
 const branchNumber = value => {
   const digits = String(value);
@@ -173,7 +201,7 @@ const selectRequiredTargets = (targets, coreVersions, requires) => {
   });
 };
 
-const buildRows = (targets, databases, suites, dependencies, coreVersions, phpVersions = [], imageConfig = defaultImageConfig) => {
+const buildRows = (targets, databases, suites, dependencies, coreVersions, phpVersions = [], imageConfig = defaultImageConfig, dependencyMatrix = []) => {
   if (phpVersions.some(php => typeof php !== 'string' || !/^\d+\.\d+$/.test(php))) {
     throw new Error('PHP version filter must contain strings such as "8.4"');
   }
@@ -192,7 +220,8 @@ const buildRows = (targets, databases, suites, dependencies, coreVersions, phpVe
         imageConfig.overrides?.php?.[php]?.[dbtype] || imageConfig.defaults[dbtype];
       if (!image_version) throw new Error(`No image version configured for ${dbtype}`);
       rows.push({ suite, php, moodle: target.ref, moodle_repository: target.repository,
-        os: 'ubuntu-latest', dbtype, image_version, experimental: target.experimental === true, dependencies });
+        os: 'ubuntu-latest', dbtype, image_version, experimental: target.experimental === true,
+        dependencies: dependenciesForRelease(target.number, dependencies, dependencyMatrix) });
     }
   }
   if (rows.length > 256) throw new Error(`Matrix has ${rows.length} rows (GitHub limit: 256); narrow the catalogue or database choices`);
@@ -226,7 +255,7 @@ const legacyRows = ({ phpVersions, moodleVersions, repositories, os, dbTypes, ex
   return { rows, description: `Legacy matrix: ${rows.length} row(s) from workflow inputs and/or org/repository variables` };
 };
 
-const resolve = async ({ github, appToken, context, branch, dbTypes, suites, dependencies, phpVersions = [], products, cataloguePath, versionPath, request = fetch, onWarning = () => {} }) => {
+const resolve = async ({ github, appToken, context, branch, dbTypes, suites, dependencies, dependencyMatrix = [], phpVersions = [], products, cataloguePath, versionPath, request = fetch, onWarning = () => {} }) => {
   const catalogue = validateCatalogue(JSON.parse(fs.readFileSync(cataloguePath, 'utf8')));
   const metadata = readMetadata(fs.readFileSync(versionPath, 'utf8'));
   const { owner, repo } = context.repo;
@@ -274,9 +303,9 @@ const resolve = async ({ github, appToken, context, branch, dbTypes, suites, dep
   }
   const selected = selectRequiredTargets(readableTargets, coreVersions, metadata.requires);
   if (!selected.length) throw new Error(`No ${branch} catalogue targets meet plugin requires ${metadata.requires}`);
-  const rows = buildRows(selected, dbTypes, suites, dependencies, coreVersions, phpVersions);
+  const rows = buildRows(selected, dbTypes, suites, dependencies, coreVersions, phpVersions, defaultImageConfig, dependencyMatrix);
   return { targets: selected, rows, metadata,
     description: selected.map(t => `${t.product} ${t.release}: ${t.repository}@${t.ref} (PHP ${phpVersions.length ? phpVersions.filter(php => t.php.includes(php)).join(', ') : `${t.php_min}–${t.php_max}`})`).join('\n') };
 };
 
-module.exports = { releaseNumber, branchNumber, releaseBranch, phpRange, validateImageConfig, validateCatalogue, readMetadata, selectTargets, selectRequiredTargets, buildRows, legacyRows, resolve };
+module.exports = { releaseNumber, parseDependencyMatrix, branchNumber, releaseBranch, phpRange, validateImageConfig, validateCatalogue, readMetadata, selectTargets, selectRequiredTargets, buildRows, legacyRows, resolve };

@@ -21,6 +21,16 @@ test('normal CI and comment CI wire the repository product variable', () => {
   assert.match(step.with.script, /products: process\.env\.VAR_PRODUCTS/);
 });
 
+test('normal CI and comment CI wire the dependency matrix variable', () => {
+  const fs = require('node:fs');
+  const YAML = require('yaml');
+  const workflow = YAML.parse(fs.readFileSync('.github/workflows/ci.yml', 'utf8'));
+  const step = workflow.jobs.setup.steps.find(step => step.id === 'matrix');
+  assert.equal(step.env.DEPENDENCY_MATRIX, "${{ vars.MOODLE_PLUGIN_DEPENDENCY_MATRIX || '' }}");
+  assert.match(step.with.script, /parseDependencyMatrix\(process\.env\.DEPENDENCY_MATRIX\)/);
+  assert.match(step.with.script, /branch: process\.env\.BASE_BRANCH, dbTypes, suites, dependencies, dependencyMatrix/);
+});
+
 const caller = withBlock => `name: Moodle CI
 on: [pull_request, issue_comment]
 jobs:

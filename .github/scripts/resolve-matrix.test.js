@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const {
-  branchNumber, releaseBranch, phpRange, validateImageConfig, validateCatalogue, readMetadata, selectTargets, selectRequiredTargets, buildRows,
+  branchNumber, releaseBranch, phpRange, parseDependencyMatrix, validateImageConfig, validateCatalogue, readMetadata, selectTargets, selectRequiredTargets, buildRows,
   legacyRows,
   resolve,
 } = require('./resolve-matrix');
@@ -159,6 +159,35 @@ test('automatic PHP filter intersects each catalogue range without dropping rele
   assert.deepEqual([...new Set(rows.map(row => row.moodle))], ['MOODLE_500_STABLE', 'MOODLE_502_STABLE', 'MOODLE_503_STABLE']);
   assert.deepEqual([...new Set(rows.map(row => row.php))], ['8.3', '8.4']);
   assert.throws(() => buildRows(selected, ['mysqli'], ['phpunit'], '', versions, ['8.2']), /No requested PHP version supports.*MOODLE_502_STABLE/);
+});
+
+test('dependency matrix selects the latest release for both products and suites', () => {
+  const matrix = parseDependencyMatrix(JSON.stringify({
+    '5.0': ['org/one@new', 'org/two@main'],
+    '4.2': ['org/one@old', 'org/two@main', 'org/one@old'],
+    '5.2': [],
+  }));
+  const targets = catalogue.filter(target => ['4.1', '4.2', '4.5', '5.0', '5.1', '5.2'].includes(target.release));
+  const versions = Object.fromEntries(targets.map(target => [`${target.repository}@${target.ref}`, coreBuilds[target.release]]));
+  const rows = buildRows(targets, ['mysqli'], ['phpunit', 'behat'], 'org/default@main', versions, [], imageConfig, matrix);
+  const expected = { '4.1': 'org/default@main', '4.2': 'org/one@old org/two@main',
+    '4.5': 'org/one@old org/two@main', '5.0': 'org/one@new org/two@main',
+    '5.1': 'org/one@new org/two@main', '5.2': '' };
+  for (const row of rows) {
+    const target = targets.find(target => target.ref === row.moodle);
+    assert.equal(row.dependencies, expected[target.release], `${row.suite} ${target.product} ${target.release}`);
+  }
+  assert.ok(rows.some(row => row.suite === 'behat' && row.moodle.startsWith('WORKPLACE_')));
+});
+
+test('dependency matrix rejects malformed releases and dependency entries', () => {
+  assert.deepEqual(parseDependencyMatrix(''), []);
+  assert.throws(() => parseDependencyMatrix('{'), /must be valid JSON/);
+  assert.throws(() => parseDependencyMatrix('[]'), /must be a JSON object/);
+  assert.throws(() => parseDependencyMatrix('{"4.02":[]}'), /Invalid.*release/);
+  assert.throws(() => parseDependencyMatrix('{"4.2":"org/one@main"}'), /array of org\/repo@ref/);
+  assert.throws(() => parseDependencyMatrix('{"4.2":["git@github.com:org/one@main"]}'), /array of org\/repo@ref/);
+  assert.throws(() => parseDependencyMatrix('{"4.2":["org/one@main other/one@main"]}'), /array of org\/repo@ref/);
 });
 
 const resolveWithExperimentalTarget = async ({ branch = 'MOODLE_500_STABLE', phpVersions = [], unavailableRef } = {}) => {

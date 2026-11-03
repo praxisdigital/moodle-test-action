@@ -492,6 +492,7 @@ jobs:
           EXPERIMENTAL: ${{ steps.config.outputs.experimental }}
           EXCLUDE_MATRIX: ${{ steps.config.outputs.exclude_matrix }}
           DEPENDENCIES: ${{ steps.config.outputs.dependencies }}
+          DEPENDENCY_MATRIX: ${{ vars.MOODLE_PLUGIN_DEPENDENCY_MATRIX || '' }}
           RUN_PHPUNIT: ${{ inputs.run_phpunit }}
           RUN_BEHAT: ${{ inputs.run_behat }}
           BEHAT_ON_PULL_REQUEST: ${{ inputs.behat_on_pull_request }}
@@ -542,8 +543,9 @@ jobs:
               const dependencies = prConfig?.dependencies ?? (process.env.DEPENDENCIES || '');
               let result;
               if ((prConfig?.automatic || process.env.AUTOMATIC) === 'true') {
+                const dependencyMatrix = resolver.parseDependencyMatrix(process.env.DEPENDENCY_MATRIX);
                 result = await resolver.resolve({ github, appToken: process.env.APP_TOKEN, context,
-                  branch: process.env.BASE_BRANCH, dbTypes, suites, dependencies,
+                  branch: process.env.BASE_BRANCH, dbTypes, suites, dependencies, dependencyMatrix,
                   onWarning: message => core.warning(message),
                   phpVersions: prConfig?.php_versions || JSON.parse(process.env.PHP_VERSIONS),
                   products: prConfig ? (prConfig.products ? JSON.parse(prConfig.products) : undefined) :

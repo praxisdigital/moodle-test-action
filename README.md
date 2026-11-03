@@ -77,63 +77,23 @@ jobs:
 
 ### Inputs with organization/repository variable fallbacks
 
-| Caller `with:` input | Actions variable | Applies to | Value and default when unset |
-| --- | --- | --- | --- |
-| `products` | `MOODLE_PRODUCTS` | Automatic only | JSON array of `["moodle"]` and/or `["workplace"]`; empty/unset selects **both**. An invalid or empty JSON array fails setup. |
-| `db_types` | `MOODLE_DB_TYPES` | Both modes | JSON array of `"mysqli"`, `"pgsql"`, and/or `"sqlsrv"`; default `["mysqli"]`. PHPUnit supports all three; Behat rows for `sqlsrv` are skipped. |
-| `dependencies` | `MOODLE_PLUGIN_DEPENDENCIES` | Both modes | JSON array of `"org/repo@ref"` strings (or whitespace-separated entries); default none. |
-| `php_versions` | `MOODLE_SUPPORTED_PHP_VERSIONS` | **Input:** both modes. **Variable:** legacy only. | JSON array such as `["8.3", "8.4"]`. Automatic mode uses **only an explicit input** as an optional filter on each catalogue target; without it, all supported PHP versions run. Legacy default `["8.4"]`. |
-| `moodle_versions` | `MOODLE_SUPPORTED_VERSIONS` | Legacy only | JSON refs, e.g. `["MOODLE_502_STABLE"]`; default `["MOODLE_502_STABLE"]`. |
-| `moodle_repositories` | `MOODLE_REPOS` | Legacy only | JSON `org/repo` array; default `["moodle/moodle"]`. |
-| `os` | `MOODLE_OS` | Legacy only | JSON runner-label array; default `["ubuntu-latest"]`. Automatic rows always use `ubuntu-latest`, regardless of this setting. |
-| `experimental` | `MOODLE_EXPERIMENTAL` | Legacy only | JSON boolean array; default `[false]`. Automatic targets use their catalogue flags. |
-| `exclude_matrix` | `MOODLE_EXCLUDE_MATRIX` | Legacy only | JSON array of row-matching objects; default `[]`. For example, `[{"dbtype":"pgsql","php":"8.4"}]`. |
-| `plugin_component` | `MOODLE_PLUGIN_COMPONENT` | PHPUnit only | Optional Moodle component override; normally detected from `version.php`. |
-| `plugin_path` | `MOODLE_PLUGIN_PATH` | PHPUnit only | Optional plugin install-path override; normally detected. |
-| `additional_phpunit_arguments` | `MOODLE_ADDITIONAL_PHPUNIT_ARGUMENTS` | PHPUnit only | Extra PHPUnit CLI arguments; default empty. |
-| `additional_behat_arguments` | `MOODLE_ADDITIONAL_BEHAT_ARGUMENTS` | Behat only | Extra Behat CLI arguments; default empty. |
-| `org` | `MOODLE_ORG` | GitHub App setup | App installation owner; defaults to the calling repository's owner. |
-
-In **automatic mode**, `MOODLE_PLUGIN_DEPENDENCY_MATRIX` is an additional repository/organization Actions variable (there is no caller `with:` input for it). It is a JSON object mapping Moodle releases to arrays of `org/repo@ref` dependencies. Each release key is a starting point: the latest key **at or below** a row's Moodle release supplies that row's entire dependency list, for both Moodle and Workplace and for PHPUnit and Behat. For example, a `4.2` entry also applies to 4.3–4.5 until a `5.0` entry takes over. Releases before the first key use `dependencies` / `MOODLE_PLUGIN_DEPENDENCIES`. An empty array at a release clears the dependencies from that release until the next key. The variable is ignored in legacy mode (`automatic: 'false'`). Use valid JSON without comments; entries use `org/repo@ref`, not Git SSH URLs.
-
-```json
-{
-  "4.2": ["my-org/local_shared@MOODLE_402_STABLE", "my-org/block_widget@v1"],
-  "5.0": ["my-org/local_shared@MOODLE_500_STABLE", "my-org/block_widget@v2"]
-}
-```
-
-### Complete Actions variable examples
-
-These commands illustrate **every Actions variable described above**. Replace `OWNER/REPO`, `my-org`, component names, refs and versions with your own values. Set variables on the plugin repository (or replace `--repo OWNER/REPO` with `--org MY-ORG` for organization-wide defaults); repository variables override organization variables of the same name. Only set the overrides you need.
-
-```sh
-# Automatic-mode product selection and release-dependent plugin checkouts.
-gh variable set MOODLE_PRODUCTS --body '["moodle", "workplace"]' --repo OWNER/REPO
-gh variable set MOODLE_PLUGIN_DEPENDENCY_MATRIX --body '{"4.2":["my-org/local_shared@MOODLE_402_STABLE","my-org/block_widget@v1"],"5.0":["my-org/local_shared@MOODLE_500_STABLE","my-org/block_widget@v2"]}' --repo OWNER/REPO
-
-# Both modes: databases and static dependencies (also the fallback before the first matrix key).
-gh variable set MOODLE_DB_TYPES --body '["mysqli", "pgsql"]' --repo OWNER/REPO
-gh variable set MOODLE_PLUGIN_DEPENDENCIES --body '["my-org/local_shared@main"]' --repo OWNER/REPO
-
-# Legacy matrix only (requires automatic: 'false' in the calling workflow).
-gh variable set MOODLE_SUPPORTED_PHP_VERSIONS --body '["8.3", "8.4"]' --repo OWNER/REPO
-gh variable set MOODLE_SUPPORTED_VERSIONS --body '["MOODLE_500_STABLE", "MOODLE_502_STABLE"]' --repo OWNER/REPO
-gh variable set MOODLE_REPOS --body '["moodle/moodle"]' --repo OWNER/REPO
-gh variable set MOODLE_OS --body '["ubuntu-latest"]' --repo OWNER/REPO
-gh variable set MOODLE_EXPERIMENTAL --body '[false]' --repo OWNER/REPO
-gh variable set MOODLE_EXCLUDE_MATRIX --body '[{"dbtype":"pgsql","php":"8.4"}]' --repo OWNER/REPO
-
-# Optional plugin, test-runner and private GitHub App settings.
-gh variable set MOODLE_PLUGIN_COMPONENT --body 'local_example' --repo OWNER/REPO
-gh variable set MOODLE_PLUGIN_PATH --body 'local/example' --repo OWNER/REPO
-gh variable set MOODLE_ADDITIONAL_PHPUNIT_ARGUMENTS --body '--filter ExampleTest' --repo OWNER/REPO
-gh variable set MOODLE_ADDITIONAL_BEHAT_ARGUMENTS --body '--tags @example' --repo OWNER/REPO
-gh variable set MOODLE_ORG --body 'my-org' --repo OWNER/REPO
-gh variable set MOODLE_CI_APP_ID --body '123456' --repo OWNER/REPO
-```
-
-`MOODLE_CI_APP_PRIVATE_KEY` is an Actions **secret**, not a variable. In automatic mode, use an explicit `with: php_versions: '["8.3", "8.4"]'` to filter catalogue PHP versions; the `MOODLE_SUPPORTED_PHP_VERSIONS` variable above only affects legacy mode.
+| Caller `with:` input | Actions variable | Applies to | Value and default when unset | Full example (variable value) |
+| --- | --- | --- | --- | --- |
+| `products` | `MOODLE_PRODUCTS` | Automatic only | JSON array of `["moodle"]` and/or `["workplace"]`; empty/unset selects **both**. An invalid or empty JSON array fails setup. | `["moodle", "workplace"]` |
+| N/A | `MOODLE_PLUGIN_DEPENDENCY_MATRIX` | Automatic only | JSON object mapping Moodle release start points to complete arrays of `org/repo@ref` dependencies. Each entry applies to that release and later releases until the next key, for Moodle and Workplace, PHPUnit and Behat. Before the first key, uses `dependencies` / `MOODLE_PLUGIN_DEPENDENCIES`; `[]` clears dependencies from its release onward. No JSON comments or Git SSH URLs. | `{"4.2":["my-org/local_shared@MOODLE_402_STABLE","my-org/block_widget@v1"],"5.0":["my-org/local_shared@MOODLE_500_STABLE","my-org/block_widget@v2"]}` |
+| `db_types` | `MOODLE_DB_TYPES` | Both modes | JSON array of `"mysqli"`, `"pgsql"`, and/or `"sqlsrv"`; default `["mysqli"]`. PHPUnit supports all three; Behat rows for `sqlsrv` are skipped. | `["mysqli", "pgsql"]` |
+| `dependencies` | `MOODLE_PLUGIN_DEPENDENCIES` | Both modes | JSON array of `"org/repo@ref"` strings (or whitespace-separated entries); default none. | `["my-org/local_shared@main", "my-org/block_widget@v1"]` |
+| `php_versions` | `MOODLE_SUPPORTED_PHP_VERSIONS` | **Input:** both modes. **Variable:** legacy only. | JSON array such as `["8.3", "8.4"]`. Automatic mode uses **only an explicit input** as an optional filter on each catalogue target; without it, all supported PHP versions run. Legacy default `["8.4"]`. | `["8.3", "8.4"]` |
+| `moodle_versions` | `MOODLE_SUPPORTED_VERSIONS` | Legacy only | JSON refs, e.g. `["MOODLE_502_STABLE"]`; default `["MOODLE_502_STABLE"]`. | `["MOODLE_500_STABLE", "MOODLE_502_STABLE"]` |
+| `moodle_repositories` | `MOODLE_REPOS` | Legacy only | JSON `org/repo` array; default `["moodle/moodle"]`. | `["moodle/moodle"]` |
+| `os` | `MOODLE_OS` | Legacy only | JSON runner-label array; default `["ubuntu-latest"]`. Automatic rows always use `ubuntu-latest`, regardless of this setting. | `["ubuntu-latest"]` |
+| `experimental` | `MOODLE_EXPERIMENTAL` | Legacy only | JSON boolean array; default `[false]`. Automatic targets use their catalogue flags. | `[false]` |
+| `exclude_matrix` | `MOODLE_EXCLUDE_MATRIX` | Legacy only | JSON array of row-matching objects; default `[]`. For example, `[{"dbtype":"pgsql","php":"8.4"}]`. | `[{"dbtype":"pgsql","php":"8.4"}]` |
+| `plugin_component` | `MOODLE_PLUGIN_COMPONENT` | PHPUnit only | Optional Moodle component override; normally detected from `version.php`. | `local_example` |
+| `plugin_path` | `MOODLE_PLUGIN_PATH` | PHPUnit only | Optional plugin install-path override; normally detected. | `local/example` |
+| `additional_phpunit_arguments` | `MOODLE_ADDITIONAL_PHPUNIT_ARGUMENTS` | PHPUnit only | Extra PHPUnit CLI arguments; default empty. | `--filter ExampleTest` |
+| `additional_behat_arguments` | `MOODLE_ADDITIONAL_BEHAT_ARGUMENTS` | Behat only | Extra Behat CLI arguments; default empty. | `--tags @example` |
+| `org` | `MOODLE_ORG` | GitHub App setup | App installation owner; defaults to the calling repository's owner. | `my-org` |
 
 The App ID can separately be set as `MOODLE_CI_APP_ID` in an Actions **secret or variable** (secret takes precedence). `MOODLE_CI_APP_PRIVATE_KEY` must be an Actions **secret**, not a variable. Use `secrets: inherit` in the caller; see [Private repositories](#private-repositories-github-app).
 
@@ -160,7 +120,7 @@ All JSON-array examples above are **strings** under YAML `with:` (use single quo
 ### Event-specific behavior
 
 - For a normal PR, push or `workflow_dispatch`, the caller's `with:` values override repository variables, which override organization variables. The caller controls its own event triggers: an unrestricted `push:` and `pull_request:` can start two runs for the same PR commit. Restrict `push.branches` as in the [recommended workflow](#recommended-workflow); a PR head branch matching that filter still starts both events. Concurrency cancels superseded PR runs, not push runs.
-- For a **same-repository `#behat` comment**, GitHub starts the workflow on the default branch, but setup reads the **PR merge commit's** `.github/workflows/ci.yml`. Its literal `with:` values for `automatic`, `products`, matrix filters, dependencies and Behat settings override repository/organization variables. Omitted values fall back to variables/defaults, **not** the default-branch caller's `with:`. The dependency matrix is variable-only and applies to these runs too. Dynamic `${{ ... }}` expressions in the PR workflow's `with:` fail because they cannot be evaluated safely. The PR file must have exactly one matching reusable-workflow job; it cannot change `org` or `action_ref` relative to the default-branch caller. Fork PR `#behat` comments are rejected. Other settings such as `behat_on_pull_request`, PHPUnit options, and App setup are not reconfigured from the PR's `with:` on a comment run. `issue_comment` must be enabled in the plugin repository's default-branch workflow for this to work.
+- For a **same-repository `#behat` comment**, GitHub starts the workflow on the default branch, but setup reads the **PR merge commit's** `.github/workflows/ci.yml`. Its literal `with:` values for `automatic`, `products`, matrix filters, dependencies and Behat settings override repository/organization variables. Omitted values fall back to variables/defaults, **not** the default-branch caller's `with:`. Dynamic `${{ ... }}` expressions in the PR workflow's `with:` fail because they cannot be evaluated safely. The PR file must have exactly one matching reusable-workflow job; it cannot change `org` or `action_ref` relative to the default-branch caller. Fork PR `#behat` comments are rejected. Other settings such as `behat_on_pull_request`, PHPUnit options, and App setup are not reconfigured from the PR's `with:` on a comment run. `issue_comment` must be enabled in the plugin repository's default-branch workflow for this to work.
 
 With `automatic: 'false'`, the legacy fallbacks are Moodle 5.2, PHP 8.4, `moodle/moodle`, `ubuntu-latest`, MySQLi and non-experimental. With `automatic: 'true'`, the legacy Moodle-ref, repository, runner, experimental, exclusion and organization/repository PHP-version variables are ignored. If an explicit PHP filter excludes a non-experimental catalogue target, setup fails; excluded experimental targets are skipped with a warning.
 
@@ -179,7 +139,7 @@ In automatic mode, product selection uses `with: products` first, then
 runs and on-demand `#behat` runs. Use `["workplace"]` for Workplace only, or
 `["moodle", "workplace"]` for both. Legacy mode keeps its explicit repository matrix.
 
-The central [JSON catalogue](.github/moodle-test-targets.json) defines available test targets. Moodle has 4.0–4.5 and 5.0–5.3; Workplace has 4.0–4.1, 4.3–4.5 and 5.0–5.2, using `WORKPLACE_*_LATEST` rather than numbered or rolling refs. Each entry couples a release, product, exact core repository/ref, `required` flag and inclusive `php_min`/`php_max` versions. All PHP minor versions between those bounds are tested; for example `8.2`–`8.4` generates 8.2, 8.3 and 8.4. Set `version_file: "public/version.php"` for core branches using Moodle's new `public/` layout (otherwise the root file is used). Set `experimental: true` to make test failures non-blocking and skip a target with a warning when its core version cannot be read or its PHP range does not match the filter. The private Workplace fork's PHP support, refs and version-file paths still need verification with App access. The dependency matrix uses these catalogue release numbers, even when a plugin branch spans several releases.
+The central [JSON catalogue](.github/moodle-test-targets.json) defines available test targets. Moodle has 4.0–4.5 and 5.0–5.3; Workplace has 4.0–4.1, 4.3–4.5 and 5.0–5.2, using `WORKPLACE_*_LATEST` rather than numbered or rolling refs. Each entry couples a release, product, exact core repository/ref, `required` flag and inclusive `php_min`/`php_max` versions. All PHP minor versions between those bounds are tested; for example `8.2`–`8.4` generates 8.2, 8.3 and 8.4. Set `version_file: "public/version.php"` for core branches using Moodle's new `public/` layout (otherwise the root file is used). Set `experimental: true` to make test failures non-blocking and skip a target with a warning when its core version cannot be read or its PHP range does not match the filter. The private Workplace fork's PHP support, refs and version-file paths still need verification with App access.
 
 Automatic rows select database image versions from [the image configuration](.github/default-image-version.json): `overrides.product[product][release]` takes precedence over `overrides.php[php]`, then `defaults`. The PHP overrides choose MySQL 5.7 for PHP 7.3 and MySQL 8.0 for PHP 7.4; the Moodle 5.3 product override selects PostgreSQL 17. Other rows use the defaults. The selected version is passed to both PHPUnit and Behat. Legacy and standalone action callers retain their existing database image choices unless they pass an `image_version` input to a subaction.
 

@@ -52,7 +52,7 @@ test('Workplace release branches use the same applicable release boundaries', ()
   const branches = ['WORKPLACE_41_STABLE', 'WORKPLACE_500_STABLE', 'WORKPLACE_502_STABLE'];
   assert.deepEqual(releases(choose(branches, branches[0], requires, ['workplace'])), ['4.1', '4.5']);
   assert.deepEqual(releases(choose(branches, branches[1], requires, ['workplace'])), ['5.0']);
-  assert.deepEqual(releases(choose(branches, branches[2], requires, ['workplace'])), ['5.2']);
+  assert.deepEqual(releases(choose(branches, branches[2], requires, ['workplace'])), ['5.2', '5.3']);
   assert.ok(choose(branches, branches[0], requires, ['workplace']).every(target => target.ref.startsWith('WORKPLACE_')));
 });
 
@@ -66,7 +66,7 @@ test('both products run by default on either branch prefix; explicit products re
     assert.deepEqual(choose(branches, base, requires, ['workplace']).map(target => target.product), ['workplace']);
   }
   assert.deepEqual(choose(branches, 'feature/123', requires, ['moodle', 'workplace']).map(target => target.product),
-    ['moodle', 'workplace', 'moodle', 'workplace', 'moodle', 'workplace', 'moodle', 'workplace', 'moodle']);
+    ['moodle', 'workplace', 'moodle', 'workplace', 'moodle', 'workplace', 'moodle', 'workplace', 'moodle', 'workplace']);
   assert.throws(() => selectTargets(catalogue, branches, branches[0], requires, ['other']), /products/);
 });
 

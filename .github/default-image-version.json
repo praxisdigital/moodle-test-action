@@ -8,6 +8,9 @@
     "product": {
       "moodle": {
         "5.3": { "pgsql": "17" }
+      },
+      "workplace": {
+        "5.3": { "pgsql": "17" }
       }
     }
   }

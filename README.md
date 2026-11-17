@@ -266,6 +266,8 @@ Only tags matching `@[A-Za-z0-9_-]+` are accepted. Multiple tags are passed as a
 
 If no `tests/behat/*.feature` files exist, the Behat job exits successfully and can optionally comment on the PR with `post_no_tests_comment: 'true'`.
 
+On Behat failure, download that matrix job's `behat-artifacts-*` artifact. In addition to Moodle's screenshots/HTML in `behat-faildump`, it contains `moodle-server.log`, `selenium.log`, and `behat-browser-diagnostics/browser-*.jsonl`. Each JSONL record identifies the feature, scenario and step; records include Chrome console messages and JavaScript errors, failed HTTP/network requests, completed requests taking at least three seconds, and a snapshot of requests still outstanding at a failed step (or outstanding for at least two seconds). Request URLs retain query parameter names but omit their values. These diagnostics do not disable Moodle's pending-JavaScript check.
+
 ## Root Action Usage
 
 The root action is a compatibility wrapper. It runs PHPUnit by default and Behat only when `run_behat: 'true'` is set.
@@ -334,6 +336,7 @@ When calling the root or modular actions directly, mint the token in the caller 
 ## Notes
 
 - To verify resolver and PR-workflow parsing changes locally, run `npm ci --ignore-scripts` and `npm test`. The `#behat` setup job installs the locked YAML parser only when it needs to read a PR workflow.
+- To smoke-test Behat browser diagnostic parsing with PHP, run `php behat-test/behat_ci_diagnostics.test.php`.
 - PHPUnit supports `mysqli`, `pgsql`, and `sqlsrv`.
 - Behat supports `mysqli` and `pgsql`.
 - Dependencies use `org/repo@ref` format.

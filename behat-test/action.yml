@@ -388,6 +388,7 @@ runs:
         \$CFG->behat_wwwroot = 'http://127.0.0.1:8000';
         \$CFG->behat_dataroot = '$GITHUB_WORKSPACE/behatdata';
         \$CFG->behat_prefix = 'b_';
+        \$CFG->behat_faildump_path = '$GITHUB_WORKSPACE/behat-faildump';
         if ($BEHAT_INCREASE_TIMEOUT > 0) {
             \$CFG->behat_increasetimeout = $BEHAT_INCREASE_TIMEOUT;
         }
@@ -397,6 +398,10 @@ runs:
                 'wd_host' => 'http://127.0.0.1:4444/wd/hub',
                 'capabilities' => [
                     'extra_capabilities' => [
+                        'goog:loggingPrefs' => [
+                            'browser' => 'ALL',
+                            'performance' => 'ALL',
+                        ],
                         'chromeOptions' => [
                             'args' => ['--no-sandbox', '--disable-dev-shm-usage'],
                         ],
@@ -489,6 +494,13 @@ runs:
         echo "Selenium did not become ready in time."
         exit 1
 
+    - name: Install Behat browser diagnostics
+      if: ${{ steps.detect.outputs.has_behat == 'true' }}
+      shell: bash
+      run: |
+        mkdir -p "$GITHUB_WORKSPACE/behat-faildump" "$GITHUB_WORKSPACE/behat-browser-diagnostics"
+        cp "$GITHUB_ACTION_PATH/behat_ci_diagnostics.php" "$MOODLE_PUBLIC_DIR/lib/tests/behat/behat_ci_diagnostics.php"
+
     - name: Start Moodle web server
       if: ${{ steps.detect.outputs.has_behat == 'true' }}
       shell: bash
@@ -519,6 +531,7 @@ runs:
       env:
         ADDITIONAL_BEHAT_ARGUMENTS: ${{ inputs.additional_behat_arguments }}
         BEHAT_STEP_TIMEOUT_MINUTES: ${{ inputs.behat_step_timeout_minutes }}
+        CI_BEHAT_DIAGNOSTICS_DIR: ${{ github.workspace }}/behat-browser-diagnostics
       run: |
         if ! [[ "$BEHAT_STEP_TIMEOUT_MINUTES" =~ ^[1-9][0-9]*$ ]]; then
           echo "behat_step_timeout_minutes must be a positive integer."
@@ -573,14 +586,22 @@ runs:
       shell: bash
       run: exit 1
 
+    - name: Collect Selenium logs on Behat failure
+      if: ${{ steps.detect.outputs.has_behat == 'true' && (failure() || steps.run_behat.outputs.status != '0') }}
+      shell: bash
+      run: docker logs --timestamps selenium > "$GITHUB_WORKSPACE/selenium.log" 2>&1 || true
+
     - name: Upload Behat artifacts
       if: ${{ steps.detect.outputs.has_behat == 'true' && (failure() || steps.run_behat.outputs.status != '0') }}
       uses: actions/upload-artifact@v4
       with:
-        name: behat-artifacts
+        name: behat-artifacts-${{ github.job }}-${{ strategy.job-index }}
         if-no-files-found: ignore
         path: |
           moodle-server.log
+          selenium.log
+          behat-browser-diagnostics
+          behat-faildump
           moodledata/behat
           behatdata
           moodle/behat_faildump

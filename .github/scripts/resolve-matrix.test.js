@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const {
-  branchNumber, releaseBranch, phpRange, parseDependencyMatrix, validateImageConfig, validateCatalogue, readMetadata, selectTargets, selectRequiredTargets, buildRows,
+  branchNumber, releaseBranch, phpRange, parseTargetReleases, parseDependencyMatrix, validateImageConfig, validateCatalogue, readMetadata, selectTargets, selectRequiredTargets, buildRows,
   legacyRows,
   resolve,
 } = require('./resolve-matrix');
@@ -46,6 +46,29 @@ test('repository B: a 5.2 branch takes ownership of 5.2 and newer', () => {
   assert.deepEqual(releases(choose(branches, branches[0])), ['4.1', '4.5']);
   assert.deepEqual(releases(choose(branches, branches[1])), ['5.0']);
   assert.deepEqual(releases(choose(branches, branches[2])), ['5.2', '5.3']);
+});
+
+test('explicit target releases bypass branch boundaries and required milestones', () => {
+  const branches = ['MOODLE_500_STABLE', 'MOODLE_502_STABLE', 'MOODLE_503_STABLE'];
+  const selected = selectTargets(catalogue, branches, branches[0], requires, ['moodle'], ['5.0', '5.1', '5.2', '5.3']);
+  assert.deepEqual(releases(selected), ['5.0', '5.1', '5.2', '5.3']);
+  assert.deepEqual(releases(choose(branches, branches[0])), ['5.0']);
+  assert.deepEqual(releases(selectTargets(catalogue, branches, branches[0], requires, ['moodle'], ['5.0', '5.2', '5.3'])),
+    ['5.0', '5.2', '5.3']);
+  assert.throws(() => selectTargets(catalogue, branches, branches[0], requires, ['workplace'], ['4.2']),
+    /No catalogue target for workplace 4\.2/);
+  assert.throws(() => selectTargets(catalogue, branches, branches[0],
+    readMetadata('<?php $plugin->requires = 2025041400; $plugin->supported = [500, 502];'),
+    ['moodle'], ['5.0', '5.3']), /excluded by plugin supported\/incompatible metadata/);
+});
+
+test('target release input accepts only JSON release strings and empty means automatic', () => {
+  assert.deepEqual(parseTargetReleases(''), []);
+  assert.deepEqual(parseTargetReleases('[]'), []);
+  assert.deepEqual(parseTargetReleases('["5.0","5.2","5.0"]'), ['5.0', '5.2']);
+  for (const raw of ['{', '"5.0"', '[5.0]', '["MOODLE_500_STABLE"]', '["5.02"]']) {
+    assert.throws(() => parseTargetReleases(raw), /target_releases/);
+  }
 });
 
 test('Workplace release branches use the same applicable release boundaries', () => {
@@ -190,27 +213,29 @@ test('dependency matrix rejects malformed releases and dependency entries', () =
   assert.throws(() => parseDependencyMatrix('{"4.2":["org/one@main other/one@main"]}'), /array of org\/repo@ref/);
 });
 
-const resolveWithExperimentalTarget = async ({ branch = 'MOODLE_500_STABLE', phpVersions = [], unavailableRef } = {}) => {
+const resolveWithExperimentalTarget = async ({ branch = 'MOODLE_500_STABLE', phpVersions = [], unavailableRef,
+  targetReleases = [], branches = ['MOODLE_500_STABLE'], catalogueReleases = ['5.0', '5.3'], pluginRequires = 2025041400 } = {}) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'experimental-matrix-'));
   const cataloguePath = path.join(directory, 'catalogue.json');
   const versionPath = path.join(directory, 'version.php');
   fs.writeFileSync(cataloguePath, JSON.stringify({ targets: catalogue.filter(target =>
-    target.product === 'moodle' && ['5.0', '5.3'].includes(target.release)) }));
-  fs.writeFileSync(versionPath, '<?php $plugin->requires = 2025041400;');
+    target.product === 'moodle' && catalogueReleases.includes(target.release)) }));
+  fs.writeFileSync(versionPath, `<?php $plugin->requires = ${pluginRequires};`);
   const requested = [];
   const warnings = [];
   try {
     const result = await resolve({
       github: {
-        paginate: async () => [{ name: 'MOODLE_500_STABLE' }],
+        paginate: async () => branches.map(name => ({ name })),
         rest: { repos: { listBranches() {}, getContent: async ({ ref }) => {
           requested.push(ref);
           if (ref === unavailableRef) throw Object.assign(new Error('Not Found'), { status: 404 });
-          return { data: { type: 'file', content: Buffer.from(`$version = ${coreBuilds[ref === 'MOODLE_500_STABLE' ? '5.0' : '5.3']}.00;`).toString('base64') } };
+          const release = catalogue.find(target => target.ref === ref).release;
+          return { data: { type: 'file', content: Buffer.from(`$version = ${coreBuilds[release]}.00;`).toString('base64') } };
         } } },
       },
       context: { repo: { owner: 'example', repo: 'plugin' } }, branch,
-      dbTypes: ['mysqli'], suites: ['phpunit'], dependencies: '', phpVersions,
+      dbTypes: ['mysqli'], suites: ['phpunit'], dependencies: '', phpVersions, targetReleases,
       products: ['moodle'], cataloguePath, versionPath, onWarning: message => warnings.push(message),
     });
     return { result, requested, warnings };
@@ -218,6 +243,24 @@ const resolveWithExperimentalTarget = async ({ branch = 'MOODLE_500_STABLE', php
     fs.rmSync(directory, { recursive: true, force: true });
   }
 };
+
+test('explicit automatic releases run across a newer plugin branch and keep experimental rows', async () => {
+  const { result, requested } = await resolveWithExperimentalTarget({
+    branches: ['MOODLE_500_STABLE', 'MOODLE_502_STABLE'], targetReleases: ['5.0', '5.3'],
+  });
+  assert.deepEqual(requested, ['MOODLE_500_STABLE', 'MOODLE_503_STABLE']);
+  assert.deepEqual(releases(result.targets), ['5.0', '5.3']);
+  assert.ok(result.rows.filter(row => row.moodle === 'MOODLE_503_STABLE').every(row => row.experimental));
+});
+
+test('explicit optional release runs and incompatible plugin requires fails setup', async () => {
+  const { result } = await resolveWithExperimentalTarget({
+    catalogueReleases: ['5.0', '5.1', '5.3'], targetReleases: ['5.0', '5.1'],
+  });
+  assert.deepEqual(releases(result.targets), ['5.0', '5.1']);
+  await assert.rejects(resolveWithExperimentalTarget({ targetReleases: ['5.0', '5.3'], pluginRequires: 2026042000 }),
+    /Requested moodle 5\.0 does not meet plugin requires/);
+});
 
 test('experimental target outside a PHP filter is skipped before core lookup with a warning', async () => {
   const { result, requested, warnings } = await resolveWithExperimentalTarget({ phpVersions: ['8.2'] });

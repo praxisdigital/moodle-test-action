@@ -204,8 +204,9 @@ const selectTargets = (catalogue, branches, base, metadata, products = ['moodle'
   selected = selected.filter(target =>
     (!metadata.supported || (target.number >= metadata.supported[0] && target.number <= metadata.supported[1])) &&
     (!metadata.incompatible || target.number < metadata.incompatible));
-  if (targetReleases.length && selected.length !== targetReleases.length * chosenProducts.length) {
-    throw new Error('target_releases includes releases excluded by plugin supported/incompatible metadata');
+  const excluded = targetReleases.filter(release => !selected.some(target => target.release === release));
+  if (excluded.length) {
+    throw new Error(`target_releases includes ${excluded.join(', ')}, excluded by plugin supported/incompatible metadata`);
   }
   return selected.sort((a, b) => a.number - b.number || chosenProducts.indexOf(a.product) - chosenProducts.indexOf(b.product));
 };

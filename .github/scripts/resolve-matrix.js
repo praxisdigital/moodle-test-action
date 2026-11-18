@@ -45,6 +45,21 @@ const releaseNumber = value => {
   return Number(match[1]) * 100 + Number(match[2]);
 };
 
+const parseTargetReleases = raw => {
+  if (!String(raw || '').trim()) return [];
+  let releases;
+  try {
+    releases = JSON.parse(raw);
+  } catch (error) {
+    throw new Error(`target_releases must be a JSON array: ${error.message}`);
+  }
+  if (!Array.isArray(releases) || releases.some(release =>
+    typeof release !== 'string' || !/^[1-9]\d*\.(?:0|[1-9]\d*)$/.test(release))) {
+    throw new Error('target_releases must be a JSON array of release strings such as ["5.0","5.2"]');
+  }
+  return [...new Set(releases)];
+};
+
 const parseDependencyMatrix = raw => {
   if (!String(raw || '').trim()) return [];
   let matrix;
@@ -157,7 +172,7 @@ const readMetadata = text => {
   };
 };
 
-const selectTargets = (catalogue, branches, base, metadata, products = ['moodle', 'workplace']) => {
+const selectTargets = (catalogue, branches, base, metadata, products = ['moodle', 'workplace'], targetReleases = []) => {
   if (!Array.isArray(products) || !products.length || products.some(product => !['moodle', 'workplace'].includes(product))) {
     throw new Error('products must be a non-empty JSON array containing moodle and/or workplace');
   }
@@ -172,7 +187,14 @@ const selectTargets = (catalogue, branches, base, metadata, products = ['moodle'
   }
 
   let selected = candidates;
-  if (current) {
+  if (targetReleases.length) {
+    for (const product of chosenProducts) for (const release of targetReleases) {
+      if (!candidates.some(target => target.product === product && target.release === release)) {
+        throw new Error(`No catalogue target for ${product} ${release} requested by target_releases`);
+      }
+    }
+    selected = candidates.filter(target => targetReleases.includes(target.release));
+  } else if (current) {
     const next = Math.min(Infinity, ...parsed
       .filter(branch => branch.release > current.release)
       .map(branch => branch.release));
@@ -182,6 +204,9 @@ const selectTargets = (catalogue, branches, base, metadata, products = ['moodle'
   selected = selected.filter(target =>
     (!metadata.supported || (target.number >= metadata.supported[0] && target.number <= metadata.supported[1])) &&
     (!metadata.incompatible || target.number < metadata.incompatible));
+  if (targetReleases.length && selected.length !== targetReleases.length * chosenProducts.length) {
+    throw new Error('target_releases includes releases excluded by plugin supported/incompatible metadata');
+  }
   return selected.sort((a, b) => a.number - b.number || chosenProducts.indexOf(a.product) - chosenProducts.indexOf(b.product));
 };
 
@@ -255,12 +280,12 @@ const legacyRows = ({ phpVersions, moodleVersions, repositories, os, dbTypes, ex
   return { rows, description: `Legacy matrix: ${rows.length} row(s) from workflow inputs and/or org/repository variables` };
 };
 
-const resolve = async ({ github, appToken, context, branch, dbTypes, suites, dependencies, dependencyMatrix = [], phpVersions = [], products, cataloguePath, versionPath, request = fetch, onWarning = () => {} }) => {
+const resolve = async ({ github, appToken, context, branch, dbTypes, suites, dependencies, dependencyMatrix = [], phpVersions = [], products, targetReleases = [], cataloguePath, versionPath, request = fetch, onWarning = () => {} }) => {
   const catalogue = validateCatalogue(JSON.parse(fs.readFileSync(cataloguePath, 'utf8')));
   const metadata = readMetadata(fs.readFileSync(versionPath, 'utf8'));
   const { owner, repo } = context.repo;
   const branches = await github.paginate(github.rest.repos.listBranches, { owner, repo, per_page: 100 });
-  const targets = selectTargets(catalogue, branches.map(item => item.name), branch, metadata, products);
+  const targets = selectTargets(catalogue, branches.map(item => item.name), branch, metadata, products, targetReleases);
   if (!targets.length) throw new Error(`No catalogue targets match ${branch} and plugin version.php`);
   const coreVersions = {};
   const readableTargets = [];
@@ -301,11 +326,16 @@ const resolve = async ({ github, appToken, context, branch, dbTypes, suites, dep
       onWarning(`Skipping experimental ${target.repository}@${target.ref}: ${error.message}`);
     }
   }
-  const selected = selectRequiredTargets(readableTargets, coreVersions, metadata.requires);
+  const selected = targetReleases.length ? readableTargets.filter(target => {
+    if (coreVersions[`${target.repository}@${target.ref}`] < metadata.requires) {
+      throw new Error(`Requested ${target.product} ${target.release} does not meet plugin requires ${metadata.requires}`);
+    }
+    return true;
+  }) : selectRequiredTargets(readableTargets, coreVersions, metadata.requires);
   if (!selected.length) throw new Error(`No ${branch} catalogue targets meet plugin requires ${metadata.requires}`);
   const rows = buildRows(selected, dbTypes, suites, dependencies, coreVersions, phpVersions, defaultImageConfig, dependencyMatrix);
   return { targets: selected, rows, metadata,
     description: selected.map(t => `${t.product} ${t.release}: ${t.repository}@${t.ref} (PHP ${phpVersions.length ? phpVersions.filter(php => t.php.includes(php)).join(', ') : `${t.php_min}–${t.php_max}`})`).join('\n') };
 };
 
-module.exports = { releaseNumber, parseDependencyMatrix, branchNumber, releaseBranch, phpRange, validateImageConfig, validateCatalogue, readMetadata, selectTargets, selectRequiredTargets, buildRows, legacyRows, resolve };
+module.exports = { releaseNumber, parseTargetReleases, parseDependencyMatrix, branchNumber, releaseBranch, phpRange, validateImageConfig, validateCatalogue, readMetadata, selectTargets, selectRequiredTargets, buildRows, legacyRows, resolve };

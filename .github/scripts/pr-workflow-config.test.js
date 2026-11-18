@@ -53,6 +53,7 @@ test('reads folded JSON dependencies and literal matrix overrides from the PR wo
       db_types: '["mysqli", "pgsql"]'
       automatic: 'true'
       products: '["moodle", "workplace"]'
+      target_releases: '["5.0", "5.2", "5.3"]'
       run_behat: 'true'
 `));
   assert.deepEqual(JSON.parse(values.dependencies), [
@@ -61,6 +62,18 @@ test('reads folded JSON dependencies and literal matrix overrides from the PR wo
   ]);
   assert.equal(values.db_types, '["mysqli", "pgsql"]');
   assert.equal(values.products, '["moodle", "workplace"]');
+  assert.equal(values.target_releases, '["5.0", "5.2", "5.3"]');
+});
+
+test('normal CI and comment CI pass target releases to the automatic resolver', () => {
+  const fs = require('node:fs');
+  const YAML = require('yaml');
+  const workflow = YAML.parse(fs.readFileSync('.github/workflows/ci.yml', 'utf8'));
+  const step = workflow.jobs.setup.steps.find(step => step.id === 'matrix');
+  assert.equal(step.env.TARGET_RELEASES, '${{ inputs.target_releases }}');
+  assert.match(step.with.script, /prConfig\?\.target_releases \?\? process\.env\.TARGET_RELEASES/);
+  assert.equal(resolvePrConfig({ target_releases: '["5.0","5.2"]' }).target_releases, '["5.0","5.2"]');
+  assert.equal(resolvePrConfig({}).target_releases, '');
 });
 
 test('supports whitespace-separated dependencies and absent with block', () => {
@@ -81,6 +94,7 @@ test('comment uses PR inputs ahead of org variables and ignores default-branch c
       dependencies: '["org/first@MOODLE_500_STABLE", "org/second@master"]'
       db_types: '["pgsql"]'
       products: '["workplace"]'
+      target_releases: '["5.0", "5.2", "5.3"]'
       php_versions: '["8.3", "8.4"]'
       additional_behat_arguments: '--dry-run'
 `));
@@ -92,6 +106,7 @@ test('comment uses PR inputs ahead of org variables and ignores default-branch c
   assert.deepEqual(config.db_types, ['pgsql']);
   assert.deepEqual(config.php_versions, ['8.3', '8.4']);
   assert.equal(config.products, '["workplace"]');
+  assert.equal(config.target_releases, '["5.0", "5.2", "5.3"]');
   assert.equal(config.additional_behat_arguments, '--dry-run');
   assert.equal(config.run_behat, 'true');
 });

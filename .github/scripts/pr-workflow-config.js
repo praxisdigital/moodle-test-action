@@ -74,6 +74,7 @@ const resolvePrConfig = (pr, vars = {}, defaultOrg = '') => {
   const config = {
     automatic,
     products: value('products', 'products'),
+    target_releases: value('target_releases'),
     php_versions: parseList('php_versions', php, enabled ? [] : ['8.4']),
     moodle_versions: enabled ? [] : parseList('moodle_versions', value('moodle_versions', 'moodle_versions'), ['MOODLE_502_STABLE']),
     moodle_repositories: enabled ? [] : parseList('moodle_repositories', value('moodle_repositories', 'moodle_repositories'), ['moodle/moodle']),

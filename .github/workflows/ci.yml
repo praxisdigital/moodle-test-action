@@ -13,6 +13,11 @@ on:
         required: false
         type: string
         default: ''
+      target_releases:
+        description: 'Optional JSON array of catalogue releases to test in automatic mode instead of branch-based release selection'
+        required: false
+        type: string
+        default: ''
       run_phpunit:
         description: 'Run PHPUnit tests'
         required: false
@@ -485,6 +490,7 @@ jobs:
           DB_TYPES: ${{ steps.config.outputs.db_types }}
           AUTOMATIC: ${{ steps.config.outputs.automatic }}
           PRODUCTS: ${{ inputs.products || vars.MOODLE_PRODUCTS || '' }}
+          TARGET_RELEASES: ${{ inputs.target_releases }}
           PHP_VERSIONS: ${{ steps.config.outputs.php_versions }}
           MOODLE_VERSIONS: ${{ steps.config.outputs.moodle_versions }}
           MOODLE_REPOSITORIES: ${{ steps.config.outputs.moodle_repositories }}
@@ -550,6 +556,7 @@ jobs:
                   phpVersions: prConfig?.php_versions || JSON.parse(process.env.PHP_VERSIONS),
                   products: prConfig ? (prConfig.products ? JSON.parse(prConfig.products) : undefined) :
                     (process.env.PRODUCTS ? JSON.parse(process.env.PRODUCTS) : undefined),
+                  targetReleases: resolver.parseTargetReleases(prConfig?.target_releases ?? process.env.TARGET_RELEASES),
                   cataloguePath: `${process.env.GITHUB_WORKSPACE}/.moodle-test-action/.github/moodle-test-targets.json`,
                   versionPath: `${process.env.GITHUB_WORKSPACE}/plugin-src/version.php`,
                 });

@@ -212,6 +212,7 @@ jobs:
           permission-issues: write
           permission-pull-requests: write
           permission-statuses: write
+          permission-members: read
 
       - name: Warn about GitHub App token failure
         if: ${{ steps.app-config.outputs.has_app == 'true' && steps.app-token.outcome == 'failure' }}
@@ -236,6 +237,8 @@ jobs:
       - name: Parse comment command
         id: command
         uses: ./.moodle-test-action/comment-parser
+        with:
+          org_members_token: ${{ steps.app-token.outputs.token }}
 
       - name: Resolve CI configuration
         id: config

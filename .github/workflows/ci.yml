@@ -212,7 +212,7 @@ jobs:
           permission-issues: write
           permission-pull-requests: write
           permission-statuses: write
-          permission-members: read
+          permission-members: ${{ contains(fromJSON('["issue_comment", "pull_request_review", "pull_request_review_comment"]'), github.event_name) && 'read' || '' }}
 
       - name: Warn about GitHub App token failure
         if: ${{ steps.app-config.outputs.has_app == 'true' && steps.app-token.outcome == 'failure' }}

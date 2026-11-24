@@ -1,6 +1,12 @@
 name: Comment parser
 description: 'Resolve PR/comment command metadata for Moodle CI'
 
+inputs:
+  org_members_token:
+    description: 'GitHub App token with Organization Members: read permission for #behat authorization'
+    required: false
+    default: ''
+
 outputs:
   is_behat_comment:
     description: 'Whether the event requested Behat with #behat'
@@ -27,7 +33,10 @@ runs:
     - name: Parse CI command context
       id: parse
       uses: actions/github-script@v8
+      env:
+        HAS_ORG_MEMBERS_TOKEN: ${{ inputs.org_members_token != '' }}
       with:
+        github-token: ${{ inputs.org_members_token || github.token }}
         script: |
           const commentBody = context.eventName === 'pull_request_review'
             ? context.payload.review?.body
@@ -37,8 +46,30 @@ runs:
             context.payload.pull_request ||
             context.payload.issue?.pull_request
           );
-          const isBehatComment = !isMoodleCiHelperComment && isPullRequestComment &&
+          let isBehatComment = !isMoodleCiHelperComment && isPullRequestComment &&
             String(commentBody || '').toLowerCase().includes('#behat');
+
+          if (isBehatComment) {
+            const username = context.eventName === 'pull_request_review'
+              ? context.payload.review?.user?.login
+              : context.payload.comment?.user?.login;
+            if (process.env.HAS_ORG_MEMBERS_TOKEN !== 'true' || !username) {
+              core.warning('Ignoring #behat: an organization-membership token and comment author are required.');
+              isBehatComment = false;
+            } else {
+              try {
+                const { data } = await github.rest.orgs.getMembershipForUser({
+                  org: context.repo.owner,
+                  username,
+                });
+                isBehatComment = data.state === 'active' && ['member', 'admin'].includes(data.role);
+                if (!isBehatComment) core.notice('Ignoring #behat: requester is not an active organization member.');
+              } catch (error) {
+                core.warning(`Ignoring #behat: could not verify organization membership (${error.status || error.message}).`);
+                isBehatComment = false;
+              }
+            }
+          }
 
           const extractBehatTags = body => {
             const text = String(body || '');

@@ -458,6 +458,7 @@ runs:
           fi
           git clone --quiet "$clone_url" "$tmpdir"
           git -C "$tmpdir" checkout --quiet "$ref"
+          git -C "$tmpdir" submodule update --init --recursive
           component=$(sed -En 's/^[[:space:]]*\$plugin->component[[:space:]]*=[[:space:]]*["'"'"']([^"'"'"']+)["'"'"'][[:space:]]*;.*/\1/p' "$tmpdir/version.php")
           if [ -z "$component" ]; then
             echo "Failed to determine component for dependency $dep"

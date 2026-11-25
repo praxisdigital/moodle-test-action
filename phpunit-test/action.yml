@@ -276,6 +276,7 @@ runs:
       with:
         path: ${{ github.workspace }}/plugin-src
         ref: ${{ inputs.checkout_ref || github.ref }}
+        submodules: recursive
 
     - name: Resolve plugin component and install path
       shell: bash
@@ -372,6 +373,7 @@ runs:
           echo "Cloning $repo@$ref to $path ..."
           git clone "$url" "$path"
           git -C "$path" checkout "$ref"
+          git -C "$path" submodule update --init --recursive
         done
 
     - name: Setting up PHPUnit

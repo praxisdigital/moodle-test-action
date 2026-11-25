@@ -145,6 +145,7 @@ runs:
         repository: ${{ steps.target.outputs.checkout_repository }}
         ref: ${{ steps.target.outputs.checkout_ref }}
         path: plugin-src
+        submodules: recursive
         persist-credentials: false
 
     - name: Detect Behat feature files
